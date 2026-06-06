@@ -23,8 +23,13 @@ typedef struct
 {
     async_cb callback;
     void*    arg;
+    void*    buffer;
+    uint32_t total_len;
+    uint32_t bytes_done;
+    int      fd;
     bool     used;
-    uint8_t  padding[7];
+    bool     is_read;
+    uint8_t  padding[2];
 }OpSlot;
 
 typedef struct
@@ -110,12 +115,51 @@ static void* io_completion_thread(void* arg)
         OpSlot* slot = io_uring_cqe_get_data(cqe);
         if(slot != NULL)
         {
-            if(slot->callback != NULL && cqe->res > 0)
+            /* Accumulate this completion's bytes. cqe->res can be
+             * negative on error or zero on EOF, so guard the add. */
+            if(cqe->res > 0)
             {
-               slot->callback(slot->arg);
+                slot->bytes_done += (uint32_t)cqe->res;
             }
 
-            free_slot(slot);
+            if(slot->is_read && cqe->res > 0 && slot->bytes_done < slot->total_len)
+            {
+                /* Short read. The tty is configured with VMIN=1 so a
+                 * single io_uring_read can return as soon as ≥1 byte
+                 * is available, even when more was asked for. Submit
+                 * another read for the remainder against the same
+                 * slot; the user callback fires only when the buffer
+                 * is fully populated. */
+                struct io_uring_sqe* sqe = io_uring_get_sqe(&uart_ring);
+                if(sqe != NULL)
+                {
+                    io_uring_sqe_set_data(sqe, slot);
+                    io_uring_prep_read(sqe, slot->fd,
+                                       (uint8_t*)slot->buffer + slot->bytes_done,
+                                       slot->total_len - slot->bytes_done,
+                                       (uint64_t)-1);
+                    (void)io_uring_submit(&uart_ring);
+                    /* Slot stays in use; do not free or fire callback. */
+                }
+                else
+                {
+                    /* Submission queue full — can't chain. Drop the
+                     * operation; the FSM's read timer will fire. */
+                    free_slot(slot);
+                }
+            }
+            else
+            {
+                /* Write completion, full-length read, or error
+                 * (cqe->res <= 0). Fire the user callback if bytes
+                 * were actually transferred, then release the slot. */
+                if(slot->callback != NULL && cqe->res > 0)
+                {
+                    slot->callback(slot->arg);
+                }
+
+                free_slot(slot);
+            }
         }
 
         io_uring_cqe_seen(&uart_ring, cqe);
@@ -252,6 +296,11 @@ eStatus hal_uart_write(uint32_t device_index, const void* buffer, uint32_t len, 
 
     slot->callback = callback;
     slot->arg = arg;
+    slot->buffer = NULL;
+    slot->total_len = 0;
+    slot->bytes_done = 0;
+    slot->fd = -1;
+    slot->is_read = false;
 
     struct io_uring_sqe* sqe = io_uring_get_sqe(&uart_ring);
     if (sqe == NULL) 
@@ -300,6 +349,11 @@ eStatus hal_uart_read(uint32_t device_index, void* buffer, uint32_t len, async_c
 
     slot->callback = callback;
     slot->arg = arg;
+    slot->buffer = buffer;
+    slot->total_len = len;
+    slot->bytes_done = 0;
+    slot->fd = uart_devices[device_index].fd;
+    slot->is_read = true;
 
     struct io_uring_sqe* sqe = io_uring_get_sqe(&uart_ring);
     if (sqe == NULL) 
@@ -322,6 +376,16 @@ eStatus hal_uart_read(uint32_t device_index, void* buffer, uint32_t len, async_c
 
     (void)pthread_mutex_unlock(&uart_mutex);
 
+    return eSTATUS_SUCCESSFUL;
+}
+
+eStatus hal_uart_flush_input(uint32_t device_index)
+{
+    if(device_index >= eUART_DEVICE_COUNT)
+    {
+        return eSTATUS_INVALID_VALUE;
+    }
+    (void)tcflush(uart_devices[device_index].fd, TCIFLUSH);
     return eSTATUS_SUCCESSFUL;
 }
 

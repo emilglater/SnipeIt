@@ -69,6 +69,6 @@ echo "[start] (Press Ctrl+C to stop the whole pipeline.)"
 source ~/venvs/edgetpu/bin/activate
 python3 person_streamer.py \
     --model  /home/snipeit/SnipeIt/pi-streaming/models/ssd_mobilenet_v2_fpnlite_640_person_int8.tflite \
-    --threshold 0.20 \
+    --threshold 0.30 \
     --camera \
     --verbose

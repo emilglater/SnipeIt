@@ -60,6 +60,15 @@ eStatus hal_uart_write(uint32_t device_index, const void* buffer, uint32_t len, 
 eStatus hal_uart_read(uint32_t device_index, void* buffer, uint32_t len, async_cb callback, void* arg);
 
 /**
+ * @brief   Flush the input buffer.
+ * @param   device_index A value from @ref eUARTDeviceNumber.
+ * @returns A value from @ref eStatus.
+ * @retval  eSTATUS_SUCCESSFUL      successful execution
+ * @retval  eSTATUS_INVALID_VALUE   device_index is not from @ref eUARTDeviceNumber
+ */
+eStatus hal_uart_flush_input(uint32_t device_index);
+
+/**
  * @brief   Abort submitted device operation.
  * @param   device_index A value from @ref eUARTDeviceNumber.
  * @returns A value from @ref eStatus.

@@ -357,6 +357,7 @@ void gps_init_state(FSM* fsm, Event* event)
         else
         {
             LOG_DEBUG("Configuration complete");
+            (void)hal_uart_flush_input(eGPS_UART_DEVICE);
             (void)util_fsm_transition(fsm, gps_idle_state);
         }
         break;
@@ -453,7 +454,57 @@ void gps_update_state(FSM* fsm, Event* event)
         }
         else
         {
-            LOG_WARNING("Frame is invalid");
+            //LOG_WARNING("Frame is invalid");
+            const uint8_t *raw = (const uint8_t *)&resp_frame;
+            LOG_WARNING("Frame is invalid. Hex[0..15]: "
+                        "%02X %02X %02X %02X %02X %02X %02X %02X "
+                        "%02X %02X %02X %02X %02X %02X %02X %02X",
+                        raw[0],  raw[1],  raw[2],  raw[3],
+                        raw[4],  raw[5],  raw[6],  raw[7],
+                        raw[8],  raw[9],  raw[10], raw[11],
+                        raw[12], raw[13], raw[14], raw[15]);
+            LOG_WARNING("Frame is invalid. Hex[16..31]: "
+                        "%02X %02X %02X %02X %02X %02X %02X %02X "
+                        "%02X %02X %02X %02X %02X %02X %02X %02X",
+                        raw[16], raw[17], raw[18], raw[19],
+                        raw[20], raw[21], raw[22], raw[23],
+                        raw[24], raw[25], raw[26], raw[27],
+                        raw[28], raw[29], raw[30], raw[31]);
+            LOG_WARNING("Frame is invalid. ASCII[0..31]: "
+                        "%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c"
+                        "%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c",
+                        (raw[0]  >= 0x20 && raw[0]  < 0x7F) ? raw[0]  : '.',
+                        (raw[1]  >= 0x20 && raw[1]  < 0x7F) ? raw[1]  : '.',
+                        (raw[2]  >= 0x20 && raw[2]  < 0x7F) ? raw[2]  : '.',
+                        (raw[3]  >= 0x20 && raw[3]  < 0x7F) ? raw[3]  : '.',
+                        (raw[4]  >= 0x20 && raw[4]  < 0x7F) ? raw[4]  : '.',
+                        (raw[5]  >= 0x20 && raw[5]  < 0x7F) ? raw[5]  : '.',
+                        (raw[6]  >= 0x20 && raw[6]  < 0x7F) ? raw[6]  : '.',
+                        (raw[7]  >= 0x20 && raw[7]  < 0x7F) ? raw[7]  : '.',
+                        (raw[8]  >= 0x20 && raw[8]  < 0x7F) ? raw[8]  : '.',
+                        (raw[9]  >= 0x20 && raw[9]  < 0x7F) ? raw[9]  : '.',
+                        (raw[10] >= 0x20 && raw[10] < 0x7F) ? raw[10] : '.',
+                        (raw[11] >= 0x20 && raw[11] < 0x7F) ? raw[11] : '.',
+                        (raw[12] >= 0x20 && raw[12] < 0x7F) ? raw[12] : '.',
+                        (raw[13] >= 0x20 && raw[13] < 0x7F) ? raw[13] : '.',
+                        (raw[14] >= 0x20 && raw[14] < 0x7F) ? raw[14] : '.',
+                        (raw[15] >= 0x20 && raw[15] < 0x7F) ? raw[15] : '.',
+                        (raw[16] >= 0x20 && raw[16] < 0x7F) ? raw[16] : '.',
+                        (raw[17] >= 0x20 && raw[17] < 0x7F) ? raw[17] : '.',
+                        (raw[18] >= 0x20 && raw[18] < 0x7F) ? raw[18] : '.',
+                        (raw[19] >= 0x20 && raw[19] < 0x7F) ? raw[19] : '.',
+                        (raw[20] >= 0x20 && raw[20] < 0x7F) ? raw[20] : '.',
+                        (raw[21] >= 0x20 && raw[21] < 0x7F) ? raw[21] : '.',
+                        (raw[22] >= 0x20 && raw[22] < 0x7F) ? raw[22] : '.',
+                        (raw[23] >= 0x20 && raw[23] < 0x7F) ? raw[23] : '.',
+                        (raw[24] >= 0x20 && raw[24] < 0x7F) ? raw[24] : '.',
+                        (raw[25] >= 0x20 && raw[25] < 0x7F) ? raw[25] : '.',
+                        (raw[26] >= 0x20 && raw[26] < 0x7F) ? raw[26] : '.',
+                        (raw[27] >= 0x20 && raw[27] < 0x7F) ? raw[27] : '.',
+                        (raw[28] >= 0x20 && raw[28] < 0x7F) ? raw[28] : '.',
+                        (raw[29] >= 0x20 && raw[29] < 0x7F) ? raw[29] : '.',
+                        (raw[30] >= 0x20 && raw[30] < 0x7F) ? raw[30] : '.',
+                        (raw[31] >= 0x20 && raw[31] < 0x7F) ? raw[31] : '.');
             retry_handler(aobj, fsm);
         }
         break;
