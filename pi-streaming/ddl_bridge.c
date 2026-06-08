@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 
 /* src/ headers */
 #include "util/event_bus/event_bus.h"
@@ -51,6 +52,17 @@ static int build_json(const DDLFrame* f, char* out, size_t cap)
     const TemperatureHumidityFrame* th = &f->temp_hum_frame;
     const ServoFrame*               s  = &f->servo_frame;
     const GPSFrame*                 g  = &f->gps_frame;
+    const MagFrame*                 c  = &f->mag_frame;
+
+    char heading_buf[32];
+    if (c->valid && isfinite(c->heading_deg))
+    {
+        snprintf(heading_buf, sizeof(heading_buf), "%.2f", (double)c->heading_deg);
+    }
+    else
+    {
+        snprintf(heading_buf, sizeof(heading_buf), "null");
+    }
 
     return snprintf(out, cap,
         "{"
@@ -82,6 +94,14 @@ static int build_json(const DDLFrame* f, char* out, size_t cap)
                     "\"altitude_m\":%.2f,"
                     "\"h_acc_m\":%.2f"
                 "}"
+                "\"compass\":{"
+                    "\"valid\":%s,"
+                    "\"raw_x\":%u,"
+                    "\"raw_y\":%u,"
+                    "\"raw_z\":%u,"
+                    "\"temperature_c\":%.2f,"
+                    "\"heading_deg\":%s"
+                "}"
             "}"
         "}",
         now_ms_epoch(),
@@ -94,7 +114,11 @@ static int build_json(const DDLFrame* f, char* out, size_t cap)
         g->valid ? "true" : "false",
             (unsigned)g->fix_type, (unsigned)g->num_satellites,
             g->latitude, g->longitude,
-            (double)g->altitude, (double)g->h_acc);
+            (double)g->altitude, (double)g->h_acc,
+        c->valid ? "true" : "false",
+            (unsigned)c->raw_x, (unsigned)c->raw_y, (unsigned)c->raw_z,
+            (double)c->temperature_c,
+            heading_buf);
 }
 
 DdlBridge* ddl_bridge_start(WebSocketServer* ws, unsigned int period_ms)
