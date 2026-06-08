@@ -33,6 +33,14 @@ static void copy_frame(BroadcasterObject* aobj)
     dst->gps_frame.valid          = src->gps_frame.valid;
     dst->gps_frame.fix_type       = src->gps_frame.fix_type;
     dst->gps_frame.num_satellites = src->gps_frame.num_satellites;
+
+    /* Compass */
+    dst->mag_frame.valid            = src->mag_frame.valid;
+    dst->mag_frame.heading_deg      = src->mag_frame.heading_deg;
+    dst->mag_frame.raw_x            = src->mag_frame.raw_x;
+    dst->mag_frame.raw_y            = src->mag_frame.raw_y;
+    dst->mag_frame.raw_z            = src->mag_frame.raw_z;
+    dst->mag_frame.temperature_c    = src->mag_frame.temperature_c;
 }
 
 void broadcaster_init_state(FSM* fsm, Event* event)
