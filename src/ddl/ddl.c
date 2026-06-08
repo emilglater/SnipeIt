@@ -5,6 +5,7 @@
 #include "util/event_bus/event_config.h"
 #include "util/event_bus/event_bus.h"
 #include "ddl/distance/distance.h"
+#include "ddl/compass/compass.h"
 #include "ddl/servo/servo.h"
 #include "util/log/log.h"
 #include "ddl/gps/gps.h"
@@ -39,6 +40,10 @@ static Event temperature_humidity_subscribe_events[] = {
 
 static Event gps_subscribe_events[] = {
     { .type = eGPS_EVENT_READ }
+};
+
+static Event compass_subscribe_events[] = {
+    { .type = eCOMPASS_EVENT_READ }
 };
 
 static DDLModule ddl_modules[eDLL_MODULE_COUNT] = {
@@ -89,6 +94,18 @@ static DDLModule ddl_modules[eDLL_MODULE_COUNT] = {
                                     sizeof(gps_subscribe_events[0]),
         .subscribe_events       = gps_subscribe_events,
         .module_name            = "gps"
+    },
+    [eDDL_MODULE_COMPASS] = {
+        .module_init            = ddl_compass_init,
+        .module_post            = ddl_compass_post,
+        .module_end             = ddl_compass_end,
+        .module_join            = ddl_compass_join,
+        .module_delete          = ddl_compass_delete,
+        .ao_id                  = eAO_COMPASS,
+        .subscribe_events_count  = sizeof(compass_subscribe_events) /
+                                    sizeof(compass_subscribe_events[0]),
+        .subscribe_events       = compass_subscribe_events,
+        .module_name            = "compass"
     }
 };
 

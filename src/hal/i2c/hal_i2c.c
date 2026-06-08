@@ -34,6 +34,12 @@ static I2CDevice i2c_devices[eI2C_DEVICE_COUNT] = {
         .fd = -1,
         .flags = 0,      // Possible flag is `I2C_M_TEN` for 10bit address length (defualt is 7bit)
         .address = 0
+    },
+    [eI2C1_DEVICE] = {
+        .path = "/dev/i2c-1",
+        .fd = -1,
+        .flags = 0,
+        .address = 0
     }
 };
 
@@ -69,24 +75,26 @@ eStatus hal_i2c_init(void)
 {
     for(uint32_t device_index = 0; device_index < eI2C_DEVICE_COUNT; ++device_index)
     {
-        i2c_devices[device_index].fd = open(i2c_devices[device_index].path, O_RDWR);
-        if(i2c_devices[device_index].fd < 0)
+        if(i2c_devices[device_index].fd == -1)
         {
-            return eSTATUS_DEVICE_ERROR;
-        }
+            i2c_devices[device_index].fd = open(i2c_devices[device_index].path, O_RDWR);
+            if(i2c_devices[device_index].fd < 0)
+            {
+                return eSTATUS_DEVICE_ERROR;
+            }
 
-        uint32_t funcs = 0;
-        // This call to `ioctl` saves in `funcs` a bitmask indicating the device's supported operations
-        if(ioctl(i2c_devices[device_index].fd, I2C_FUNCS, &funcs) < 0)
-        {
-            return eSTATUS_DEVICE_ERROR;
+            uint32_t funcs = 0;
+            // This call to `ioctl` saves in `funcs` a bitmask indicating the device's supported operations
+            if(ioctl(i2c_devices[device_index].fd, I2C_FUNCS, &funcs) < 0)
+            {
+                return eSTATUS_DEVICE_ERROR;
+            }
+            // We check to see if the device even supports read and write operations (using the I2C_RDWR operation)
+            if(!(funcs & I2C_FUNC_I2C))
+            {
+                return eSTATUS_DEVICE_ERROR;
+            }
         }
-        // We check to see if the device even supports read and write operations (using the I2C_RDWR operation)
-        if(!(funcs & I2C_FUNC_I2C))
-        {
-            return eSTATUS_DEVICE_ERROR;
-        }
-
         // Set 7bit addressing
         i2c_devices[device_index].flags &= (uint16_t)~(I2C_M_TEN);
     }

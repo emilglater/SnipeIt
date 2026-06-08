@@ -85,6 +85,7 @@ eStatus app_init(void)
 
     LOG_DEBUG("Registering modules to scheduler");
     static Event gps_read_event = { .type = eGPS_EVENT_READ };
+    static Event compass_read_event = { .type = eCOMPASS_EVENT_READ };
     static Event distance_read_event = { .type = eDISTANCE_EVENT_READ };
     static Event servo_directions_event = { .type = eSERVO_EVENT_DIRECTIONS };
     static Event broadcaster_update_event = { .type = eBROADCASTER_EVENT_UPDATE };
@@ -108,8 +109,14 @@ eStatus app_init(void)
         return status;
     }
     status = app_scheduler_subscribe(3, eAO_GPS, &gps_read_event);
-    if(status) { return status; }
-    status = app_scheduler_subscribe(4, eAO_BROADCASTER, &broadcaster_update_event);
+    if(status) {
+        return status;
+    }
+    status = app_scheduler_subscribe(4, eAO_COMPASS, &compass_read_event);
+    if(status) {
+        return status;
+    }
+    status = app_scheduler_subscribe(5, eAO_BROADCASTER, &broadcaster_update_event);
 
     return status;
 }

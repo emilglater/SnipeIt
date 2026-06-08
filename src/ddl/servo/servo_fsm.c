@@ -106,28 +106,57 @@ static eStatus pca9685_set_pwm_freq(float freq_hz)
 
 static eStatus pca9685_init(void)
 {
-    eStatus status = hal_i2c_init();
+    uint8_t swrst = 0x06;
+    
+    eStatus status = hal_i2c_set_address(eSERVO_I2C_DEVICE, 0x00);
     if (status != eSTATUS_SUCCESSFUL)
+    {
+        LOG_ERROR("SWRST set_address failed: %d", status);
         return status;
+    }
+
+    status = hal_i2c_write(eSERVO_I2C_DEVICE, &swrst, 1);
+    if (status != eSTATUS_SUCCESSFUL)
+    {
+        LOG_ERROR("SWRST write failed: %d", status);
+        return status;
+    }
+
+    sleep_us(500);
 
     status = hal_i2c_set_address(eSERVO_I2C_DEVICE, eSERVO_PCA_ADDRESS);
     if (status != eSTATUS_SUCCESSFUL)
+    {
+        LOG_ERROR("set_address failed: %d", status);
         return status;
-
+    }
     /* MODE2: totem-pole, non-inverting, change-on-STOP */
     status = pca9685_write8(REG_MODE2, MODE2_OUTDRV);
     if (status != eSTATUS_SUCCESSFUL)
+    {
+        LOG_ERROR("write MODE2 failed: %d", status);
         return status;
+    }
 
     /* MODE1: clear SLEEP so oscillator runs, keep ALLCALL for compatibility.
      * AI and RESTART get set inside pca9685_set_pwm_freq. */
     status = pca9685_write8(REG_MODE1, MODE1_ALLCALL);
     if (status != eSTATUS_SUCCESSFUL)
+    {
+        LOG_ERROR("write MODE1 failed: %d", status);
         return status;
+    }
 
     sleep_us(500);
 
-    return pca9685_set_pwm_freq(PWM_FREQ_HZ);
+    status = pca9685_set_pwm_freq(PWM_FREQ_HZ);
+    if(status != eSTATUS_SUCCESSFUL)
+    {
+        LOG_ERROR("set_pwm_freq failed: %d", status);
+        return status;
+    }
+
+    return eSTATUS_SUCCESSFUL;
 }
 
 static eStatus pca9685_set_pwm(uint8_t channel, uint16_t on, uint16_t off)

@@ -7,6 +7,7 @@ typedef enum eDDLModules
     eDDL_MODULE_SERVO,
     eDDL_MODULE_TEMPERATURE_HUMIDITY,
     eDDL_MODULE_GPS,
+    eDDL_MODULE_COMPASS,
     eDLL_MODULE_COUNT
 } eDDLModules;
 
