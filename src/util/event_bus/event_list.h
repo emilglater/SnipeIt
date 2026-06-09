@@ -13,6 +13,7 @@
 #include "ddl/distance/distance_events.h"
 #include "ddl/compass/compass_events.h"
 #include "ddl/servo/servo_events.h"
+#include "ddl/wind/wind_events.h"
 #include "ddl/gps/gps_events.h"
 // Add new module event headers here
 

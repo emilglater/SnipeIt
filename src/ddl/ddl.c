@@ -7,6 +7,7 @@
 #include "ddl/distance/distance.h"
 #include "ddl/compass/compass.h"
 #include "ddl/servo/servo.h"
+#include "ddl/wind/wind.h"
 #include "util/log/log.h"
 #include "ddl/gps/gps.h"
 
@@ -44,6 +45,10 @@ static Event gps_subscribe_events[] = {
 
 static Event compass_subscribe_events[] = {
     { .type = eCOMPASS_EVENT_READ }
+};
+
+static Event wind_subscribe_events[] = {
+    { .type = eWIND_EVENT_READ }
 };
 
 static DDLModule ddl_modules[eDLL_MODULE_COUNT] = {
@@ -102,10 +107,22 @@ static DDLModule ddl_modules[eDLL_MODULE_COUNT] = {
         .module_join            = ddl_compass_join,
         .module_delete          = ddl_compass_delete,
         .ao_id                  = eAO_COMPASS,
-        .subscribe_events_count  = sizeof(compass_subscribe_events) /
+        .subscribe_events_count = sizeof(compass_subscribe_events) /
                                     sizeof(compass_subscribe_events[0]),
         .subscribe_events       = compass_subscribe_events,
         .module_name            = "compass"
+    },
+    [eDDL_MODULE_WIND] = {
+        .module_init            = ddl_wind_init,
+        .module_post            = ddl_wind_post,
+        .module_end             = ddl_wind_end,
+        .module_join            = ddl_wind_join,
+        .module_delete          = ddl_wind_delete,
+        .ao_id                  = eAO_WIND,
+        .subscribe_events_count = sizeof(wind_subscribe_events) /
+                                    sizeof(wind_subscribe_events[0]),
+        .subscribe_events       = wind_subscribe_events,
+        .module_name            = "wind"
     }
 };
 

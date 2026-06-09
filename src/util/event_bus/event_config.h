@@ -16,6 +16,7 @@ typedef enum eActiveObjectID
     eAO_GPS,
     eAO_BROADCASTER,
     eAO_COMPASS,
+    eAO_WIND,
     eAO_COUNT
 } eActiveObjectID;
 
