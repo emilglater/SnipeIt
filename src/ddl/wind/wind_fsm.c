@@ -368,8 +368,8 @@ void wind_update_state(FSM* fsm, Event* event)
             if(is_direction_frame_valid(&resp_frame.as_direction))
             {
                 update_direction_frame(aobj, &resp_frame.as_direction);
-                LOG_DEBUG("Direction valid: %u degrees",
-                          (double)(aobj->frame->direction_degrees / 10.0f));
+                LOG_DEBUG("Direction valid: %.1f degrees",
+                          (double)aobj->frame->direction_degrees);
                 /* Cycle complete — back to idle. */
                 (void)util_fsm_transition(fsm, wind_idle_state);
             }

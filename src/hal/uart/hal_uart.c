@@ -1,6 +1,8 @@
 #include "hal_uart.h"
 
 /* Standard Libraries */
+#include <linux/serial.h>
+#include <sys/ioctl.h>
 #include <sys/types.h>
 #include <liburing.h>
 #include <pthread.h>
@@ -41,6 +43,8 @@ typedef struct
     uint16_t    stop_bits;                          /** Single or Double stop bits */
     uint16_t    parity;                             /** Parity bits in use (None, Even, or Odd) */
     OpSlot      slots[eUART_MAX_QUEUED_OPERATIONS]; /** Operations array */
+    bool        rs485_enabled;                      /** Flag for RTS config */
+    uint8_t     padding[7];
 } UARTDevice;
 
 static UARTDevice uart_devices[eUART_DEVICE_COUNT] = {
@@ -51,7 +55,8 @@ static UARTDevice uart_devices[eUART_DEVICE_COUNT] = {
         .word_size = eUART0_BITS_PER_BYTE_CONFIG,
         .stop_bits = eUART0_STOP_BIT_CONFIG,
         .parity = eUART0_PARITY_BIT_CONFIG,
-        .slots = { { 0 } }
+        .slots = { { 0 } },
+        .rs485_enabled = eUART0_RS485_CONFIG
     },
     [eUART1_DEVICE] = {
         .path = "/dev/ttyAMA1",
@@ -60,7 +65,8 @@ static UARTDevice uart_devices[eUART_DEVICE_COUNT] = {
         .word_size = eUART1_BITS_PER_BYTE_CONFIG,
         .stop_bits = eUART1_STOP_BIT_CONFIG,
         .parity = eUART1_PARITY_BIT_CONFIG,
-        .slots = { { 0 } }
+        .slots = { { 0 } },
+        .rs485_enabled = eUART1_RS485_CONFIG
     },
     [eUART2_DEVICE] = {
         .path = "/dev/ttyAMA2",
@@ -69,7 +75,8 @@ static UARTDevice uart_devices[eUART_DEVICE_COUNT] = {
         .word_size = eUART2_BITS_PER_BYTE_CONFIG,
         .stop_bits = eUART2_STOP_BIT_CONFIG,
         .parity = eUART2_PARITY_BIT_CONFIG,
-        .slots = { { 0 } }
+        .slots = { { 0 } },
+        .rs485_enabled = eUART2_RS485_CONFIG
     }
 };
 
@@ -254,6 +261,16 @@ eStatus hal_uart_init(void)
         if(tcsetattr(uart_devices[device_index].fd, TCSAFLUSH, &temp_config))
         {
             return eSTATUS_DEVICE_ERROR;
+        }
+
+        if(uart_devices[device_index].rs485_enabled)
+        {
+            struct serial_rs485 rs485_config = { 0 };
+            rs485_config.flags = SER_RS485_ENABLED | SER_RS485_RTS_ON_SEND;
+            if(ioctl(uart_devices[device_index].fd, TIOCSRS485, &rs485_config) < 0)
+            {
+                return eSTATUS_DEVICE_ERROR;
+            }
         }
     }
 

@@ -46,6 +46,12 @@ typedef enum eUARTParityBit
     eEVEN_PARITY_BIT
 } eUARTParityBit;
 
+typedef enum eUARTRS485
+{
+    eUART_RS485_DISABLED,
+    eUART_RS485_ENABLED
+} eUARTRS485;
+
 // This numeration specifies which device should be addressed.
 typedef enum eUARTDeviceNumber
 {
@@ -63,17 +69,19 @@ typedef enum eUARTConfig
     eUART0_BITS_PER_BYTE_CONFIG  = e8BITS_PER_BYTE,
     eUART0_STOP_BIT_CONFIG       = eSINGLE_STOP_BIT,
     eUART0_PARITY_BIT_CONFIG     = eNO_PARITY_BIT,
-    
+    eUART0_RS485_CONFIG          = eUART_RS485_DISABLED,
 
     eUART1_BAUD_CONFIG           = eBAUD38400,
     eUART1_BITS_PER_BYTE_CONFIG  = e8BITS_PER_BYTE,
     eUART1_STOP_BIT_CONFIG       = eSINGLE_STOP_BIT,
     eUART1_PARITY_BIT_CONFIG     = eNO_PARITY_BIT,
+    eUART1_RS485_CONFIG          = eUART_RS485_DISABLED,
 
-    eUART2_BAUD_CONFIG           = eBAUD9600,
+    eUART2_BAUD_CONFIG           = eBAUD4800,
     eUART2_BITS_PER_BYTE_CONFIG  = e8BITS_PER_BYTE,
     eUART2_STOP_BIT_CONFIG       = eSINGLE_STOP_BIT,
     eUART2_PARITY_BIT_CONFIG     = eNO_PARITY_BIT,
+    eUART2_RS485_CONFIG          = eUART_RS485_ENABLED
 } eUARTConfig;
 
 #endif
