@@ -94,12 +94,12 @@ eStatus app_init(void)
     // TODO: hardcoded, refactor later
     // Can add a `ddl_subscribe()`-type of function that will go over the modules and
     // call `app_scheduler_subscribe()` for each
-    status = app_scheduler_subscribe(0, eAO_DISTANCE, &distance_read_event);
+    status = app_scheduler_subscribe(0, eAO_COMPASS, &compass_read_event);
     if(status)
     {
         return status;
     }
-    status = app_scheduler_subscribe(1, eAO_SERVO, &servo_directions_event);
+    status = app_scheduler_subscribe(1, eAO_DISTANCE, &distance_read_event);
     if(status)
     {
         return status;
@@ -109,17 +109,17 @@ eStatus app_init(void)
     {
         return status;
     }
-    status = app_scheduler_subscribe(3, eAO_GPS, &gps_read_event);
+    status = app_scheduler_subscribe(3, eAO_SERVO, &servo_directions_event);
     if(status)
     {
         return status;
     }
-    status = app_scheduler_subscribe(4, eAO_COMPASS, &compass_read_event);
+    status = app_scheduler_subscribe(4, eAO_WIND, &wind_read_event);
     if(status)
     {
         return status;
     }
-    status = app_scheduler_subscribe(5, eAO_WIND, &wind_read_event);
+    status = app_scheduler_subscribe(5, eAO_GPS, &gps_read_event);
     if(status)
     {
         return status;

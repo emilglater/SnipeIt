@@ -298,7 +298,7 @@ static eStatus servo_init_angles()
     servo_target_angles.angles.hor_angle = 0.0f;
     servo_target_angles.angles.ver_angle = 90.f;
     servo_target_angles.seq = 0;
-    servo_scan_state_angles.hor_angle = 0.0f;
+    servo_scan_state_angles.hor_angle = 90.0f;
     servo_scan_state_angles.ver_angle = 90.0f;
     angle_direction = SERVO_INCREASE_ANGLE;
     status = servo_set_angle(eSERVO_HORIZONTAL_CHANNEL, servo_scan_state_angles.hor_angle);

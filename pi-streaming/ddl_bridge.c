@@ -25,6 +25,8 @@ struct DdlBridge
     bool             bus_up;
     bool             app_up;
     bool             scheduler_started;
+    bool             wind_offset_initialized;
+    float            wind_sensor_zero_heading;
 };
 
 /* Monotonic clock — used for the period gate (immune to wall-clock changes). */
@@ -46,13 +48,28 @@ static unsigned long long now_ms_epoch(void)
            (unsigned long long)(ts.tv_nsec / 1000000L);
 }
 
-static int build_json(const DDLFrame* f, char* out, size_t cap)
+static int build_json(const DDLFrame* f, const DdlBridge* b, char* out, size_t cap)
 {
     const DistanceFrame*            d  = &f->dist_frame;
     const TemperatureHumidityFrame* th = &f->temp_hum_frame;
     const ServoFrame*               s  = &f->servo_frame;
     const GPSFrame*                 g  = &f->gps_frame;
     const MagFrame*                 c  = &f->mag_frame;
+    const WindFrame*                w  = &f->wind_frame;
+
+    float wind_direction_deg = 0.0f;
+    if(b->wind_offset_initialized)
+    {
+        wind_direction_deg = fmodf(b->wind_sensor_zero_heading + w->direction_degrees, 360.0f);
+        if(wind_direction_deg < 0.0f)
+        {
+            wind_direction_deg += 360.0f;
+        }
+    }
+    else
+    {
+        wind_direction_deg = w->direction_degrees;
+    }
 
     char heading_buf[32];
     if (c->valid && isfinite(c->heading_deg))
@@ -93,7 +110,7 @@ static int build_json(const DDLFrame* f, char* out, size_t cap)
                     "\"longitude_deg\":%.7f,"
                     "\"altitude_m\":%.2f,"
                     "\"h_acc_m\":%.2f"
-                "}"
+                "},"
                 "\"compass\":{"
                     "\"valid\":%s,"
                     "\"raw_x\":%u,"
@@ -101,6 +118,12 @@ static int build_json(const DDLFrame* f, char* out, size_t cap)
                     "\"raw_z\":%u,"
                     "\"temperature_c\":%.2f,"
                     "\"heading_deg\":%s"
+                "},"
+                "\"wind\":{"
+                    "\"speed_valid\":%s,"
+                    "\"speed_mps\":%.2f,"
+                    "\"direction_valid\":%s,"
+                    "\"direction_deg\":%.2f"
                 "}"
             "}"
         "}",
@@ -117,8 +140,41 @@ static int build_json(const DDLFrame* f, char* out, size_t cap)
             (double)g->altitude, (double)g->h_acc,
         c->valid ? "true" : "false",
             (unsigned)c->raw_x, (unsigned)c->raw_y, (unsigned)c->raw_z,
-            (double)c->temperature_c,
-            heading_buf);
+            (double)c->temperature_c, heading_buf,
+        w->speed_valid ? "true" : "false", (double)w->speed,
+        w->direction_valid ? "true" : "false", (double)wind_direction_deg);
+}
+
+static void calibrate_wind_offset(DdlBridge* b, const DDLFrame* snap)
+{
+    if(b->wind_offset_initialized)
+    {
+        return;
+    }
+
+    const MagFrame* c = &snap->mag_frame;
+    const ServoFrame* s = &snap->servo_frame;
+
+    if(!c->valid || !isfinite(c->heading_deg))
+    {
+        return;
+    }
+
+    /* Reject the reading unless the arm is at the calibration position.
+     * Servos are open-loop on this rig, so hor_angle reflects the last
+     * commanded angle; a tight tolerance is fine. */
+    if(fabsf(s->hor_angle - 90.0f) > 2.0f)
+    {
+        return;
+    }
+
+    b->wind_sensor_zero_heading = c->heading_deg;
+    b->wind_offset_initialized  = true;
+
+    printf("[BRIDGE] Wind sensor 0-mark heading calibrated to %.2f deg "
+           "(servo hor_angle %.2f)\n",
+           (double)b->wind_sensor_zero_heading,
+           (double)s->hor_angle);
 }
 
 DdlBridge* ddl_bridge_start(WebSocketServer* ws, unsigned int period_ms)
@@ -206,8 +262,10 @@ void ddl_bridge_tick(DdlBridge* b)
         return;
     }
 
+    calibrate_wind_offset(b, snap);
+
     char buf[1024];
-    int n = build_json(snap, buf, sizeof(buf));
+    int n = build_json(snap, b, buf, sizeof(buf));
     if(n <= 0 || (size_t)n >= sizeof(buf))
     {
         fprintf(stderr, "[BRIDGE] JSON build failed (n=%d)\n", n);
