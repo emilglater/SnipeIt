@@ -41,6 +41,12 @@ static void copy_frame(BroadcasterObject* aobj)
     dst->mag_frame.raw_y            = src->mag_frame.raw_y;
     dst->mag_frame.raw_z            = src->mag_frame.raw_z;
     dst->mag_frame.temperature_c    = src->mag_frame.temperature_c;
+
+    /* Wind */
+    dst->wind_frame.speed_valid         = src->wind_frame.speed_valid;
+    dst->wind_frame.direction_valid     = src->wind_frame.direction_valid;
+    dst->wind_frame.speed               = src->wind_frame.speed;
+    dst->wind_frame.direction_degrees   = src->wind_frame.direction_degrees;
 }
 
 void broadcaster_init_state(FSM* fsm, Event* event)
