@@ -35,6 +35,7 @@
 #include "ddl_bridge.h"
 #include "websocket_server.h"
 #include "process_manager.h"
+#include "acoustic_bridge.h"
 
 #define DDL_BRIDGE_INTERVAL_MS 1000
 
@@ -52,6 +53,7 @@ typedef struct
     bool python_connected;
     bool android_connected;
     bool streaming_active;
+    AcousticBridge* acoustic_bridge; 
 } AppState;
 
 // Signal handler for clean shutdown
@@ -286,6 +288,8 @@ static void print_usage(const char *program)
 
 int main(int argc, char *argv[])
 {
+    setvbuf(stdout,NULL,_IONBF,0);  // Unbuffered stdout for real-time logs
+    setvbuf(stderr,NULL,_IONBF,0);  // Unbuffered stderr for real-time error logs
     const char *config_path = DEFAULT_CONFIG_PATH;
     
     // Parse command line arguments
@@ -387,6 +391,15 @@ int main(int argc, char *argv[])
         ws_cleanup(&app.ws);
         pm_cleanup(&app.pm);
         return 1;
+    }
+    // Initialize Acoustic bridge — NON-FATAL: if I2S isn't available, the
+    // bridge returns NULL and we continue without acoustic localization.
+    app.acoustic_bridge = acoustic_bridge_start(&app.ws);
+    if (app.acoustic_bridge == NULL)
+    {
+        fprintf(stderr, "[MAIN] WARNING: acoustic bridge failed to start; "
+                        "continuing without acoustic localization\n");
+        // intentionally NOT returning 1 — rest of system must run
     }
 
     // Initialize Unix socket IPC
@@ -491,6 +504,7 @@ int main(int argc, char *argv[])
 
         // Push a sensor_data frame at most every period_ms (gated inside)
         ddl_bridge_tick(app.bridge);
+        acoustic_bridge_tick(app.acoustic_bridge); 
 
         // Small sleep when no IPC work to prevent 100% CPU
         if (!did_work)
@@ -539,7 +553,7 @@ int main(int argc, char *argv[])
         }
         pm_stop_ffmpeg(&app.pm);
     }
-    
+    acoustic_bridge_stop(app.acoustic_bridge);
     ddl_bridge_stop(app.bridge);
 
     ipc_cleanup(&app.ipc);

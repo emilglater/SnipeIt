@@ -7,13 +7,17 @@
 #   make clean        - Remove built files
 
 CC      = gcc
-CFLAGS  = -Wall -Wextra -g -O2 -I../src
-LDFLAGS = -L../bin/debug -lsnipeit -lwebsockets -lm -pthread -luring -lgpiod
-
+CFLAGS  = -Wall -Wextra -g -O2 -D_GNU_SOURCE -I. -I../src -Iacoustic
+LDFLAGS = -L../bin/debug -lsnipeit -lwebsockets -lm -pthread -luring -lgpiod -lfftw3f -lasound
 # Source files
-SRCS = main.c unix_socket.c websocket_server.c process_manager.c config.c ddl_bridge.c
-HDRS = unix_socket.h websocket_server.h process_manager.h config.h ddl_bridge.h
-
+SRCS = main.c unix_socket.c websocket_server.c process_manager.c config.c ddl_bridge.c \
+       acoustic/acoustic_bridge.c acoustic/acoustic_config.c acoustic/ring_buffer.c \
+       acoustic/onset_detector.c acoustic/gcc_phat.c acoustic/srp_phat.c \
+       acoustic/alsa_capture.c
+HDRS = unix_socket.h websocket_server.h process_manager.h config.h ddl_bridge.h \
+       acoustic/acoustic_bridge.h acoustic/acoustic_config.h acoustic/ring_buffer.h \
+       acoustic/onset_detector.h acoustic/gcc_phat.h acoustic/srp_phat.h \
+       acoustic/alsa_capture.h
 IPC_SRCS = unix_socket.c
 IPC_HDRS = unix_socket.h
 

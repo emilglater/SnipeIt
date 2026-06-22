@@ -238,20 +238,51 @@ DdlBridge* ddl_bridge_start(WebSocketServer* ws, unsigned int period_ms)
 
 void ddl_bridge_tick(DdlBridge* b)
 {
+    /* ===== DIAG: tick-rate counters (remove once root cause is found) ===== */
+    static unsigned long diag_total_calls          = 0UL;
+    static unsigned long diag_skipped_no_client    = 0UL;
+    static unsigned long diag_skipped_gate_not_met = 0UL;
+    static unsigned long diag_emitted              = 0UL;
+    static unsigned long diag_last_report_ms       = 0UL;
+
+    diag_total_calls++;
+
+    /* Report once per wall-second, regardless of which return path runs. */
+    unsigned long diag_now_ms = now_ms_mono();
+    if(diag_now_ms - diag_last_report_ms >= 1000UL)
+    {
+        fprintf(stderr,
+            "[BRIDGE-DIAG] t_mono=%lums calls=%lu no_client=%lu "
+            "gated=%lu emitted=%lu\n",
+            diag_now_ms,
+            diag_total_calls,
+            diag_skipped_no_client,
+            diag_skipped_gate_not_met,
+            diag_emitted);
+
+        diag_total_calls          = 0UL;
+        diag_skipped_no_client    = 0UL;
+        diag_skipped_gate_not_met = 0UL;
+        diag_emitted              = 0UL;
+        diag_last_report_ms       = diag_now_ms;
+    }
+    /* ===== END DIAG ===== */
+
     if(b == NULL || !b->scheduler_started)
     {
         return;
     }
 
-    /* No client → nothing to do (skip JSON work entirely). */
     if(!ws_is_client_connected(b->ws))
     {
+        diag_skipped_no_client++;   /* DIAG */
         return;
     }
 
     unsigned long t = now_ms_mono();
     if(b->last_emit_ms != 0 && (t - b->last_emit_ms) < b->period_ms)
     {
+        diag_skipped_gate_not_met++;   /* DIAG */
         return;
     }
     b->last_emit_ms = t;
@@ -276,6 +307,8 @@ void ddl_bridge_tick(DdlBridge* b)
     {
         fprintf(stderr, "[BRIDGE] ws_send_json failed (queue full?)\n");
     }
+
+    diag_emitted++;   /* DIAG */
 }
 
 void ddl_bridge_stop(DdlBridge* b)
