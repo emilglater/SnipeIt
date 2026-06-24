@@ -18,6 +18,23 @@
     8. Forward detection data from Python to Android
     9. On Android disconnect: Stop FFmpeg, send STOP to Python
     10. Loop back to step 6
+
+    --------------------------------------------------------------------------
+    TIMING FIX (the reason this file changed):
+
+    libwebsockets >= 3.2 IGNORES the timeout argument to lws_service().  The call
+    blocks inside poll() until a socket event happens, using lws's own internal
+    timeout (which can be ~30 s on an idle link).  Because the main loop is the
+    only thing servicing lws, that made the ENTIRE loop -- IPC reads, the sensor
+    bridge, everything -- stall until the Android app happened to send a packet.
+    That is why sensor data arrived in ragged 10-20 s bursts instead of every 1 s.
+
+    The fix: a dedicated "waker" thread calls lws_cancel_service() every 20 ms.
+    That is the ONLY lws function documented as safe to call from another thread;
+    it writes a byte into lws's internal event pipe, forcing the poll() inside
+    lws_service() to return.  The main loop therefore wakes and runs a full
+    iteration at ~50 Hz, completely independent of WebSocket traffic.
+    --------------------------------------------------------------------------
  */
 
 #include <stdio.h>
@@ -29,6 +46,9 @@
 #include <stdbool.h>
 #include <sys/stat.h>   // mkfifo
 #include <sys/types.h>
+#include <time.h>
+#include <pthread.h>
+#include <libwebsockets.h>
 
 #include "config.h"
 #include "unix_socket.h"
@@ -38,6 +58,7 @@
 #include "acoustic_bridge.h"
 
 #define DDL_BRIDGE_INTERVAL_MS 1000
+#define LWS_WAKER_INTERVAL_MS  20   /* kick the lws poll this often -> loop runs at ~50 Hz */
 
 // Global state for signal handler
 static volatile bool g_running = true;
@@ -53,8 +74,24 @@ typedef struct
     bool python_connected;
     bool android_connected;
     bool streaming_active;
-    AcousticBridge* acoustic_bridge; 
+    AcousticBridge* acoustic_bridge;
 } AppState;
+
+// ---------------------------------------------------------------------------
+// Waker thread: forces lws_service()'s poll() to return every LWS_WAKER_INTERVAL_MS
+// so the main loop never stalls waiting for WebSocket traffic.  lws_cancel_service()
+// is the only lws call that is safe from a thread other than the service thread.
+// ---------------------------------------------------------------------------
+static void *lws_waker(void *arg)
+{
+    struct lws_context *ctx = (struct lws_context *)arg;
+    while (g_running)
+    {
+        usleep(LWS_WAKER_INTERVAL_MS * 1000);
+        lws_cancel_service(ctx);   // wakes the poll inside ws_service() on the main thread
+    }
+    return NULL;
+}
 
 // Signal handler for clean shutdown
 static void signal_handler(int sig)
@@ -82,7 +119,7 @@ static void send_stream_ready(AppState *app)
 // actually publishing to mediaMTX before returning success.
 //
 // This is started ONCE at program start-up and then kept running for the whole
-// session — it is deliberately NOT tied to Android connect/disconnect.  Doing
+// session -- it is deliberately NOT tied to Android connect/disconnect.  Doing
 // the start/stop per connection was the root of the intermittent black screens:
 // FFmpeg probing a freshly-(re)started raw-H.264 FIFO is not reliable, and a
 // blind "sleep then assume success" sent stream_ready even when FFmpeg had died
@@ -150,8 +187,8 @@ static bool start_camera_stream(AppState *app)
                attempt, MAX_FFMPEG_TRIES);
         usleep(3000000);  // 3 s > FFmpeg's 2 s analyzeduration, so the probe has resolved
 
-        // FFmpeg still alive after the probe window ⇒ it found the stream and is
-        // publishing.  If it exited, the probe failed → retry.
+        // FFmpeg still alive after the probe window => it found the stream and is
+        // publishing.  If it exited, the probe failed -> retry.
         if (pm_is_ffmpeg_running(&app->pm))
         {
             app->streaming_active = true;
@@ -171,7 +208,7 @@ static bool start_camera_stream(AppState *app)
 
 // On-demand start for a *file* source: Python opens the file, then FFmpeg reads
 // it.  (Unlike the camera, a file stream is started when an app connects and
-// stopped when it disconnects — there is no point streaming a file to nobody.)
+// stopped when it disconnects -- there is no point streaming a file to nobody.)
 static bool start_file_stream(AppState *app)
 {
     if (app->streaming_active)
@@ -248,7 +285,7 @@ static void on_android_disconnect(void *user_data)
 
     // Live camera: keep the pipeline running so the stream stays up and the next
     // connection is instant (and we avoid the FFmpeg/camera restart races that
-    // caused black screens).  File source: stop — no point streaming to nobody.
+    // caused black screens).  File source: stop -- no point streaming to nobody.
     if (!config_is_fifo(app->config.video_path) && app->streaming_active)
     {
         printf("[MAIN] Stopping file stream...\n");
@@ -269,7 +306,8 @@ static void forward_detection(AppState *app, const char *json, size_t len)
         {
             fprintf(stderr, "[MAIN] Failed to forward detection to Android\n");
         }
-        // Note: ws_send_json now queues messages - they'll be sent when ws_service runs
+        // Note: ws_send_json queues messages - they are flushed by the next
+        // ws_service() call at the bottom of the main loop.
     }
 }
 
@@ -288,17 +326,19 @@ static void print_usage(const char *program)
 
 int main(int argc, char *argv[])
 {
-    setvbuf(stdout,NULL,_IONBF,0);  // Unbuffered stdout for real-time logs
-    setvbuf(stderr,NULL,_IONBF,0);  // Unbuffered stderr for real-time error logs
+    setvbuf(stdout, NULL, _IONBF, 0);  // Unbuffered stdout for real-time logs
+    setvbuf(stderr, NULL, _IONBF, 0);  // Unbuffered stderr for real-time error logs
+    fprintf(stderr, "[BUILD] compiled %s %s\n", __DATE__, __TIME__);
+
     const char *config_path = DEFAULT_CONFIG_PATH;
-    
+
     // Parse command line arguments
     if (argc > 2)
     {
         print_usage(argv[0]);
         return 1;
     }
-    
+
     if (argc == 2)
     {
         if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)
@@ -308,18 +348,18 @@ int main(int argc, char *argv[])
         }
         config_path = argv[1];
     }
-    
+
     printf("==========================================\n");
     printf("  Pi Streaming Server\n");
     printf("==========================================\n\n");
-    
+
     // Initialize application state
     AppState app = {
         .python_connected = false,
         .android_connected = false,
         .streaming_active = false
     };
-    
+
     // Set up signal handlers for clean shutdown
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
@@ -332,21 +372,21 @@ int main(int argc, char *argv[])
         fprintf(stderr, "[MAIN] Failed to load configuration\n");
         return 1;
     }
-    
+
     // Probe video file
     if (config_probe_video(&app.config) != 0)
     {
         fprintf(stderr, "[MAIN] Failed to probe video file\n");
         return 1;
     }
-    
+
     // Validate configuration
     if (config_validate(&app.config) != 0)
     {
         fprintf(stderr, "[MAIN] Configuration validation failed\n");
         return 1;
     }
-    
+
     config_print(&app.config);
 
     // Now set SIGCHLD to ignore to prevent zombie processes from child processes
@@ -355,7 +395,7 @@ int main(int argc, char *argv[])
 
     // Initialize process manager
     pm_init(&app.pm);
-    
+
     // Start mediaMTX
     printf("[MAIN] Starting mediaMTX...\n");
     if (pm_start_mediamtx(&app.pm, &app.config) != 0)
@@ -363,7 +403,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "[MAIN] Failed to start mediaMTX\n");
         return 1;
     }
-    
+
     // Wait for mediaMTX to be ready
     if (pm_wait_for_mediamtx_ready(&app.config, 10) != 0)
     {
@@ -371,7 +411,7 @@ int main(int argc, char *argv[])
         pm_cleanup(&app.pm);
         return 1;
     }
-    
+
     // Initialize WebSocket server
     printf("[MAIN] Initializing WebSocket server on port %d...\n", app.config.websocket_port);
     if (ws_init(&app.ws, app.config.websocket_port) != 0)
@@ -380,26 +420,40 @@ int main(int argc, char *argv[])
         pm_cleanup(&app.pm);
         return 1;
     }
-    
+
     ws_set_callbacks(&app.ws, on_android_connect, on_android_disconnect, &app);
-    
-    // Initialize DDL bridge (starts the DDL snapshot refresh loop)
+
+    // Initialize DDL bridge (starts the DDL snapshot refresh loop / AO threads)
     app.bridge = ddl_bridge_start(&app.ws, DDL_BRIDGE_INTERVAL_MS);
-    if(app.bridge == NULL)
+    if (app.bridge == NULL)
     {
         fprintf(stderr, "[MAIN] Failed to start DDL bridge\n");
         ws_cleanup(&app.ws);
         pm_cleanup(&app.pm);
         return 1;
     }
-    // Initialize Acoustic bridge — NON-FATAL: if I2S isn't available, the
+
+    // Start the waker thread now that the lws context exists.  THIS is what keeps
+    // the main loop running at ~50 Hz regardless of WebSocket traffic (see the
+    // big comment at the top of the file for the full explanation).
+    pthread_t waker_tid;
+    if (pthread_create(&waker_tid, NULL, lws_waker, app.ws.context) != 0)
+    {
+        fprintf(stderr, "[MAIN] Failed to start lws waker thread\n");
+        ddl_bridge_stop(app.bridge);
+        ws_cleanup(&app.ws);
+        pm_cleanup(&app.pm);
+        return 1;
+    }
+
+    // Initialize Acoustic bridge -- NON-FATAL: if I2S isn't available, the
     // bridge returns NULL and we continue without acoustic localization.
     app.acoustic_bridge = acoustic_bridge_start(&app.ws);
     if (app.acoustic_bridge == NULL)
     {
         fprintf(stderr, "[MAIN] WARNING: acoustic bridge failed to start; "
                         "continuing without acoustic localization\n");
-        // intentionally NOT returning 1 — rest of system must run
+        // intentionally NOT returning 1 -- rest of system must run
     }
 
     // Initialize Unix socket IPC
@@ -407,18 +461,22 @@ int main(int argc, char *argv[])
     if (ipc_server_init(&app.ipc) != 0)
     {
         fprintf(stderr, "[MAIN] Failed to initialize IPC server\n");
+        g_running = false;
+        pthread_join(waker_tid, NULL);
         ws_cleanup(&app.ws);
         pm_cleanup(&app.pm);
         return 1;
     }
-    
+
     // Wait for Python detection script to connect
     printf("[MAIN] Waiting for Python detection script to connect...\n");
     printf("[MAIN] (Run 'python3 detection.py' in another terminal)\n\n");
-    
+
     if (ipc_accept_client(&app.ipc) != 0)
     {
         fprintf(stderr, "[MAIN] Failed to accept Python connection\n");
+        g_running = false;
+        pthread_join(waker_tid, NULL);
         ipc_cleanup(&app.ipc);
         ws_cleanup(&app.ws);
         pm_cleanup(&app.pm);
@@ -430,7 +488,7 @@ int main(int argc, char *argv[])
     // session, independent of Android connect/disconnect.  Starting it once (and
     // verifying FFmpeg is actually publishing) is what makes a fresh run + first
     // connect reliable: by the time an app connects, the stream is already live,
-    // so connecting just sends stream_ready — no per-connect FFmpeg probe race.
+    // so connecting just sends stream_ready -- no per-connect FFmpeg probe race.
     if (config_is_fifo(app.config.video_path))
     {
         if (!start_camera_stream(&app))
@@ -445,38 +503,54 @@ int main(int argc, char *argv[])
     printf("[MAIN] Android should connect to: ws://<PI_IP>:%d\n", app.config.websocket_port);
     printf("[MAIN] Video stream will be at: rtsp://<PI_IP>:%d/%s\n\n",
            app.config.rtsp_port, app.config.rtsp_stream_name);
-    
-    // Main event loop
+
+    // ---- Main event loop ------------------------------------------------------
+    // Pacing: ws_service() at the bottom blocks inside lws's poll() until either a
+    // socket event arrives OR the waker thread cancels it (~20 ms).  So one loop
+    // iteration is ~20 ms.  No usleep() is needed -- ws_service IS the pacer -- and
+    // the loop is no longer gated on the Android app sending packets.
     char msg_buffer[MAX_MSG_SIZE];
-    int ws_service_counter = 0;
     int total_processed = 0;  // Total detection messages processed
 
     while (g_running)
     {
-        int did_work = 0;
+        /* ITER-DIAG: stays SILENT on a healthy run.  With the waker, every
+         * iteration is ~20 ms, so we only log if one takes longer than 200 ms,
+         * i.e. a real stall.  No [ITER-DIAG] output == the fix is working. */
+        static struct timespec prev_iter = {0, 0};
+        struct timespec now_iter;
+        clock_gettime(CLOCK_MONOTONIC, &now_iter);
+        if (prev_iter.tv_sec != 0)
+        {
+            long since_us = (long)(now_iter.tv_sec  - prev_iter.tv_sec ) * 1000000L
+                          + (long)(now_iter.tv_nsec - prev_iter.tv_nsec) / 1000L;
+            if (since_us > 200000L)   /* only log iterations slower than 200 ms */
+            {
+                fprintf(stderr, "[ITER-DIAG] iteration gap was %ld us\n", since_us);
+            }
+        }
+        prev_iter = now_iter;
 
-        // Check for messages from Python - read in small batches to allow WS sending
+        /* 1. Drain detection messages from Python (non-blocking) and queue them
+         *    for the Android app. */
         if (app.python_connected && ipc_check_client_connected(&app.ipc))
         {
             int len;
             int msg_count = 0;
-            int batch_limit = 10;  // Read up to 10 messages per batch, then service WS
+            int batch_limit = 10;  // Read up to 10 messages per batch
 
             while (batch_limit-- > 0 &&
                    (len = ipc_recv_message(&app.ipc, msg_buffer, sizeof(msg_buffer))) > 0)
             {
                 msg_count++;
                 total_processed++;
-                did_work = 1;
-                // Queue for Android (non-blocking)
-                forward_detection(&app, msg_buffer, len);
+                forward_detection(&app, msg_buffer, len);   // queues for Android
             }
 
             if (msg_count > 0)
             {
-                printf("[MAIN] Processed %d detection messages (total: %d)\n", msg_count, total_processed);
-                // Service WebSocket to start sending queued messages
-                ws_service(&app.ws, 0);
+                printf("[MAIN] Processed %d detection messages (total: %d)\n",
+                       msg_count, total_processed);
             }
 
             if (len < 0)
@@ -486,7 +560,6 @@ int main(int argc, char *argv[])
                 printf("[MAIN] Total detection messages processed: %d\n", total_processed);
                 app.python_connected = false;
 
-                // Stop streaming if active
                 if (app.streaming_active)
                 {
                     pm_stop_ffmpeg(&app.pm);
@@ -495,29 +568,16 @@ int main(int argc, char *argv[])
             }
         }
 
-        // Service WebSocket periodically for connection handling
-        if (++ws_service_counter >= 10)
-        {
-            ws_service(&app.ws, 0);  // Non-blocking
-            ws_service_counter = 0;
-        }
-
-        // Push a sensor_data frame at most every period_ms (gated inside)
+        /* 2. Emit a sensor_data frame (gated to once per period_ms inside). */
         ddl_bridge_tick(app.bridge);
-        acoustic_bridge_tick(app.acoustic_bridge); 
 
-        // Small sleep when no IPC work to prevent 100% CPU
-        if (!did_work)
-        {
-            usleep(100);  // 100 microseconds
-        }
+        /* 3. Emit an acoustic event if one is pending (early-returns otherwise). */
+        acoustic_bridge_tick(app.acoustic_bridge);
 
-        // Check if FFmpeg is still running.  This is "playback ended" detection
-        // for a *file* source (non-looping): when FFmpeg finishes the file we
-        // stop the session.  It must NOT apply to the live camera/FIFO source —
-        // there FFmpeg exiting is an error, not normal end-of-stream, and sending
-        // STOP here would tear down the live camera session (and could even hit
-        // Python while it is blocked opening the FIFO, crashing the detector).
+        /* 4. File-source "playback ended" detection.  Must NOT apply to the live
+         *    camera/FIFO source -- there FFmpeg exiting is an error, not normal
+         *    end-of-stream, and sending STOP here would tear down the live camera
+         *    session (and could hit Python while it is blocked opening the FIFO). */
         if (app.streaming_active && !app.config.loop_video &&
             !config_is_fifo(app.config.video_path))
         {
@@ -526,24 +586,30 @@ int main(int argc, char *argv[])
             if (!pm_is_ffmpeg_running(&app.pm))
             {
                 printf("[MAIN] Video playback ended\n");
-
-                // Send STOP to Python
                 if (app.python_connected)
                 {
                     ipc_send_stop(&app.ipc);
                 }
-
                 app.streaming_active = false;
             }
         }
-        
-        // Only sleep if no work was done this iteration
-        // This ensures we process IPC as fast as possible when data is available
+
+        /* 5. Service libwebsockets: flushes any messages queued in steps 1-3 and
+         *    processes incoming WS data.  Blocks until the waker cancels it
+         *    (~20 ms) or a socket event arrives.  lws ignores the timeout value;
+         *    the waker thread provides the real pacing. */
+        ws_service(&app.ws, LWS_WAKER_INTERVAL_MS);
     }
-    
-    // Cleanup
+
+    // ---- Cleanup --------------------------------------------------------------
     printf("\n[MAIN] Shutting down...\n");
-    
+
+    /* Stop the waker BEFORE destroying the lws context, otherwise it would call
+     * lws_cancel_service() on freed memory and crash on shutdown.  g_running is
+     * already false here (set by the signal handler), so the waker exits within
+     * one LWS_WAKER_INTERVAL_MS. */
+    pthread_join(waker_tid, NULL);
+
     // Stop streaming if active
     if (app.streaming_active)
     {
@@ -553,13 +619,14 @@ int main(int argc, char *argv[])
         }
         pm_stop_ffmpeg(&app.pm);
     }
+
     acoustic_bridge_stop(app.acoustic_bridge);
     ddl_bridge_stop(app.bridge);
 
     ipc_cleanup(&app.ipc);
     ws_cleanup(&app.ws);
     pm_cleanup(&app.pm);
-    
+
     printf("[MAIN] Shutdown complete\n");
     return 0;
 }
