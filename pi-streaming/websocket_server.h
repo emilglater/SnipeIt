@@ -26,7 +26,7 @@ struct lws_context;
 // Callback function types
 typedef void (*ws_connect_callback)(void *user_data);
 typedef void (*ws_disconnect_callback)(void *user_data);
-
+typedef void (*ws_command_callback)(const char *payload, size_t len, void *user_data);
 // Single queued message
 typedef struct
 {
@@ -45,6 +45,7 @@ typedef struct
     // Callbacks
     ws_connect_callback on_connect;         // Called when client connects
     ws_disconnect_callback on_disconnect;   // Called when client disconnects
+    ws_command_callback on_command;         // Called when client sends a message
     void *callback_user_data;               // User data passed to callbacks
 
     // Message queue (ring buffer) for non-blocking sends
@@ -74,6 +75,8 @@ void ws_set_callbacks(WebSocketServer *ws,
                       ws_connect_callback on_connect,
                       ws_disconnect_callback on_disconnect,
                       void *user_data);
+
+void ws_set_command_callback(WebSocketServer *ws, ws_command_callback on_command);
 
 /**
  * @brief   Service the WebSocket server (non-blocking).
@@ -122,5 +125,7 @@ int ws_get_poll_fd(WebSocketServer *ws);
  * @param   ws A pointer to WebSocketServer structure.
  */
 void ws_cleanup(WebSocketServer *ws);
+
+
 
 #endif

@@ -15,6 +15,9 @@
 #include "util/log/log.h"
 #include "hal/hal.h"
 #include "app/app.h"
+#include "ddl/servo/servo.h"
+#include "ddl/servo/servo_events.h"
+#include "ddl/servo/servo_config.h"
 
 struct DdlBridge
 {
@@ -335,4 +338,75 @@ void ddl_bridge_stop(DdlBridge* b)
     }
     log_exit();
     free(b);
+}
+
+/* Minimal flat-JSON extractors — fine for our own well-formed command frames. */
+static bool json_get_string(const char* json, const char* key, char* out, size_t cap)
+{
+    char pat[64];
+    snprintf(pat, sizeof(pat), "\"%s\"", key);
+    const char* p = strstr(json, pat);
+    if (!p) return false;
+    p = strchr(p + strlen(pat), ':');
+    if (!p) return false;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '"') return false;
+    p++;
+    size_t i = 0;
+    while (*p && *p != '"' && i < cap - 1) out[i++] = *p++;
+    out[i] = '\0';
+    return (*p == '"');
+}
+
+static bool json_get_number(const char* json, const char* key, double* out)
+{
+    char pat[64];
+    snprintf(pat, sizeof(pat), "\"%s\"", key);
+    const char* p = strstr(json, pat);
+    if (!p) return false;
+    p = strchr(p + strlen(pat), ':');
+    if (!p) return false;
+    return sscanf(p + 1, " %lf", out) == 1;
+}
+
+void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
+{
+    (void)b; (void)len;
+    if (json == NULL) return;
+
+    char command[32];
+    if (!json_get_string(json, "command", command, sizeof(command)))
+        return;   /* not a command frame (e.g. the keepalive ping) — ignore */
+
+    if (strcmp(command, "set_servo_angles") == 0)
+    {
+        double h = 0.0, v = 0.0;
+        if (!json_get_number(json, "horizontal_deg", &h) ||
+            !json_get_number(json, "vertical_deg",   &v))
+            return;
+
+        /* Clamp to the servo's mechanical pan/tilt range so set_target
+         * isn't rejected at the extremes (the app already clamps, but
+         * defense in depth costs nothing). */
+        if (h < SERVO_HORIZONTAL_MIN_ANGLE_DEG) h = SERVO_HORIZONTAL_MIN_ANGLE_DEG;
+        if (h > SERVO_HORIZONTAL_MAX_ANGLE_DEG) h = SERVO_HORIZONTAL_MAX_ANGLE_DEG;
+        if (v < SERVO_VERTICAL_MIN_ANGLE_DEG)   v = SERVO_VERTICAL_MIN_ANGLE_DEG;
+        if (v > SERVO_VERTICAL_MAX_ANGLE_DEG)   v = SERVO_VERTICAL_MAX_ANGLE_DEG;
+
+        if (ddl_servo_set_target((float)h, (float)v) != eSTATUS_SUCCESSFUL)
+            return;
+        (void)util_event_bus_publish(eAO_SERVO, eSERVO_EVENT_NOISE_DETECTED);
+        printf("[CMD] Slew to servo (%.1f, %.1f) + scan\n", h, v);
+    }
+    else if (strcmp(command, "select_target") == 0)
+    {
+        char action[16] = {0};
+        (void)json_get_string(json, "action", action, sizeof(action));
+        if (strcmp(action, "lock") == 0)
+            (void)util_event_bus_publish(eAO_SERVO, eSERVO_EVENT_LOCK);
+        else if (strcmp(action, "unlock") == 0)
+            (void)util_event_bus_publish(eAO_SERVO, eSERVO_EVENT_SCAN);
+    }
+    /* anything else (incl. "ping"): ignore */
 }

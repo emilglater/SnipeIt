@@ -146,10 +146,12 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
             break;
             
         case LWS_CALLBACK_RECEIVE:
-            // We don't expect messages from Android, but log them
-            if (len > 0 && in)
+            if (ws && ws->on_command && in && len > 0)
             {
-                printf("[WS] Received from client: %.*s\n", (int)len, (char *)in);
+                // Command frames are small (<256B) and fit in a single WS
+                // frame. If you ever send larger payloads you'd reassemble
+                // here with lws_is_final_fragment() before dispatching.
+                ws->on_command((const char *)in, len, ws->callback_user_data);
             }
             break;
             
@@ -182,6 +184,7 @@ int ws_init(WebSocketServer *ws, int port)
         .client_connected = false,
         .on_connect = NULL,
         .on_disconnect = NULL,
+        .on_command = NULL,
         .callback_user_data = NULL,
         .queue = NULL,
         .queue_head = 0,
@@ -236,6 +239,11 @@ void ws_set_callbacks(WebSocketServer *ws,
     ws->on_connect = on_connect;
     ws->on_disconnect = on_disconnect;
     ws->callback_user_data = user_data;
+}
+
+void ws_set_command_callback(WebSocketServer *ws, ws_command_callback on_command)
+{
+    ws->on_command = on_command;
 }
 
 int ws_service(WebSocketServer *ws, int timeout_ms)

@@ -34,4 +34,6 @@ void ddl_bridge_tick(DdlBridge* bridge);
  */
 void ddl_bridge_stop(DdlBridge* bridge);
 
+void ddl_bridge_handle_command(DdlBridge* bridge, const char* json, size_t len);
+
 #endif

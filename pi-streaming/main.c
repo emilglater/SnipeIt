@@ -274,6 +274,15 @@ static void on_android_connect(void *user_data)
     else
         fprintf(stderr, "[MAIN] Stream not available; not sending stream_ready\n");
 }
+// Callback when the Android app sends a command via WebSocket.
+// Runs on the main thread inside ws_service(), so calling into the bridge /
+// event bus / servo set_target here is safe — the bridge synchronises its
+// own state and ddl_servo_set_target takes the servo target mutex.
+static void on_android_command(const char *payload, size_t len, void *user_data)
+{
+    AppState *app = (AppState *)user_data;
+    ddl_bridge_handle_command(app->bridge, payload, len);
+}
 
 // Callback when Android disconnects
 static void on_android_disconnect(void *user_data)
@@ -422,6 +431,7 @@ int main(int argc, char *argv[])
     }
 
     ws_set_callbacks(&app.ws, on_android_connect, on_android_disconnect, &app);
+    ws_set_command_callback(&app.ws, on_android_command);
 
     // Initialize DDL bridge (starts the DDL snapshot refresh loop / AO threads)
     app.bridge = ddl_bridge_start(&app.ws, DDL_BRIDGE_INTERVAL_MS);
