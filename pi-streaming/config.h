@@ -31,6 +31,18 @@ typedef struct
     double video_fps;                       // Video FPS (auto-detected)
     int video_width;                        // Video width (auto-detected)
     int video_height;                       // Video height (auto-detected)
+
+    // --- Orin frame sender (replaces the Python camera+detector) ---
+    bool orin_enabled;        // false: skip the H.265/Orin branch entirely —
+                              // single x264 encoder, app preview only (default true)
+    char orin_host[64];       // Orin IP for RTP/H.265+SEI (default "10.42.0.2")
+    int  orin_rtp_port;       // Orin UDP port (default 5600)
+    char camera_source[16];   // "camera" (libcamera) or "test" (videotestsrc) — validation
+    int  app_preview_width;   // app H.264 preview width  (0 = same as capture, 1920)
+    int  app_preview_height;  // app H.264 preview height (0 = same as capture, 1080)
+    int  app_preview_fps;     // app H.264 preview fps    (0 = same as capture, 30)
+    int  app_preview_bitrate_kbps;  // app H.264 bitrate (default 8000)
+    char app_preview_preset[16];    // x264 speed-preset (default "ultrafast")
 } StreamingConfig;
 
 /**

@@ -456,6 +456,7 @@ void gps_update_state(FSM* fsm, Event* event)
         {
             //LOG_WARNING("Frame is invalid");
             const uint8_t *raw = (const uint8_t *)&resp_frame;
+            (void)raw;
             LOG_WARNING("Frame is invalid. Hex[0..15]: "
                         "%02X %02X %02X %02X %02X %02X %02X %02X "
                         "%02X %02X %02X %02X %02X %02X %02X %02X",

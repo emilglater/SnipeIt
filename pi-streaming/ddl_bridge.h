@@ -1,6 +1,8 @@
 #ifndef DDL_BRIDGE_H
 #define DDL_BRIDGE_H
 
+#include <stdint.h>
+
 #include "websocket_server.h"
 
 typedef struct DdlBridge DdlBridge;
@@ -35,5 +37,27 @@ void ddl_bridge_tick(DdlBridge* bridge);
 void ddl_bridge_stop(DdlBridge* bridge);
 
 void ddl_bridge_handle_command(DdlBridge* bridge, const char* json, size_t len);
+
+/**
+ * @brief Forward any queued Orin detections to the app. Call from the main loop.
+ * @details The Orin receiver runs on its own thread and cannot touch the
+ *          WebSocket (all ws_send must stay on the main thread). So the receiver
+ *          callback serialises each detection message into a small internal
+ *          queue; this drains that queue and sends each message to the app in
+ *          the exact "target_detection" schema the app already expects. Cheap
+ *          when the queue is empty.
+ */
+void ddl_bridge_pump_detections(DdlBridge* bridge);
+
+/**
+ * @brief Record the capture-time servo pose for an outgoing frame_id.
+ * @details Integration hook for the Pi->Orin frame sender (protocol work
+ *          item 1). The sender calls this once per emitted frame, at the
+ *          instant of capture; the bridge reads the current servo pose and
+ *          stores it in the frame_id->pose ring so a returning detection can
+ *          be joined back to the pose the camera held when the frame was
+ *          taken. No-op if the receiver pipeline didn't start. Thread-safe.
+ */
+void ddl_bridge_record_capture_pose(DdlBridge* bridge, uint32_t frame_id);
 
 #endif

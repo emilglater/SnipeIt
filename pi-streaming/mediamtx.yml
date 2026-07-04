@@ -19,7 +19,9 @@ readTimeout: 10s
 writeTimeout: 10s
 # Size of the queue of outgoing packets.
 # A higher value allows to increase throughput, a lower value allows to save RAM.
-writeQueueSize: 512
+# 2048: absorb H.264 bitrate spikes to the app's Wi-Fi RTSP session — at 512 the
+# queue filled ~19 s into a 1080p30 ~8 Mbps stream and the app video froze.
+writeQueueSize: 2048
 # Maximum size of outgoing UDP packets.
 # This can be decreased to avoid fragmentation on networks with a low UDP MTU.
 udpMaxPayloadSize: 1472

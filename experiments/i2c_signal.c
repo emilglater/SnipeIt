@@ -19,6 +19,7 @@
  *   - PCA9685 datasheet (rev.4, 2015-04-16) sections 7.3.1, 7.3.3, 7.3.5
  *   - Adafruit_PWMServoDriver.cpp (sleep -> prescale -> wake sequence)
  *   - SER0049 product page: pulse range 500..2500 us, sweep ~180 deg
+ *  to compile this file run on this folders terminal :  gcc -I../src -o i2c_signal i2c_signal.c ../src/hal/i2c/hal_i2c.c 
  */
 
 #include <stdio.h>
@@ -312,8 +313,8 @@ int main(void)
     }
     printf("PCA9685 initialised.\n");
 
-    float angle = 0.0f;
-
+    float angle = 90.0f;
+#if 0
     while(angle <= 180.0f)
     {
         printf("\n--> Commanding both servos to %.1f deg\n", angle);
@@ -336,11 +337,12 @@ int main(void)
         sleep_us(500 * 1000);
         angle += 10.0f;
     }
+#endif
 
     printf("Reseting servos back to 0 degrees\n");
-    if (servo_set_angle(SERVO1_CHANNEL, 0.0f) != eSTATUS_SUCCESSFUL)
+    if (servo_set_angle(SERVO1_CHANNEL, angle) != eSTATUS_SUCCESSFUL)
         printf("    servo1 (ch %d) set failed\n", SERVO1_CHANNEL);
-    if (servo_set_angle(SERVO2_CHANNEL, 0.0f) != eSTATUS_SUCCESSFUL)
+    if (servo_set_angle(SERVO2_CHANNEL, angle) != eSTATUS_SUCCESSFUL)
         printf("    servo2 (ch %d) set failed\n", SERVO2_CHANNEL);
     printf("Done reseting servos\n");
 
@@ -348,7 +350,7 @@ int main(void)
 
     /*  Park the chip in SLEEP on the way out so the servos stop twitching.
         We can remove this line if we want the servos to keep "holding weight". */
-    (void)pca9685_write8(REG_MODE1, MODE1_SLEEP | MODE1_ALLCALL);
+    //(void)pca9685_write8(REG_MODE1, MODE1_SLEEP | MODE1_ALLCALL);
 
     hal_i2c_cleanup();
     printf("\nDone.\n");

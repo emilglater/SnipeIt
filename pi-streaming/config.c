@@ -116,7 +116,16 @@ void config_init_defaults(StreamingConfig *config)
         .video_duration_sec = 0.0,
         .video_fps = 30.0,
         .video_width = 0,
-        .video_height = 0
+        .video_height = 0,
+        .orin_enabled = true,
+        .orin_host = "10.42.0.2",
+        .orin_rtp_port = 5600,
+        .camera_source = "camera",
+        .app_preview_width = 0,
+        .app_preview_height = 0,
+        .app_preview_fps = 0,
+        .app_preview_bitrate_kbps = 8000,
+        .app_preview_preset = "ultrafast"
     };
 }
 
@@ -173,7 +182,17 @@ int config_load(StreamingConfig *config, const char *config_path)
     json_get_int(json, "rtsp_port", &config->rtsp_port);
     json_get_int(json, "detection_frame_interval", &config->detection_frame_interval);
     json_get_bool(json, "loop_video", &config->loop_video);
-    
+
+    json_get_bool(json, "orin_enabled", &config->orin_enabled);
+    json_get_string(json, "orin_host", config->orin_host, sizeof(config->orin_host));
+    json_get_int(json, "orin_rtp_port", &config->orin_rtp_port);
+    json_get_string(json, "camera_source", config->camera_source, sizeof(config->camera_source));
+    json_get_int(json, "app_preview_width",  &config->app_preview_width);
+    json_get_int(json, "app_preview_height", &config->app_preview_height);
+    json_get_int(json, "app_preview_fps",    &config->app_preview_fps);
+    json_get_int(json, "app_preview_bitrate_kbps", &config->app_preview_bitrate_kbps);
+    json_get_string(json, "app_preview_preset", config->app_preview_preset, sizeof(config->app_preview_preset));
+
     free(json);
     
     printf("[CONFIG] Loaded configuration from %s\n", config_path);

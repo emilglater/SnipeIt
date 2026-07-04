@@ -20,3 +20,5 @@ script/misra_c_2012_rules.txt
 
 # Don't ignore vendor/ceedling/bin
 !vendor/ceedling/bin/
+# SEI capture sample (session artifact)
+/pi_sei_sample.hevc

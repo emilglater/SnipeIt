@@ -49,13 +49,14 @@
 #include <time.h>
 #include <pthread.h>
 #include <libwebsockets.h>
+#include <gst/gst.h>
 
 #include "config.h"
-#include "unix_socket.h"
 #include "ddl_bridge.h"
 #include "websocket_server.h"
 #include "process_manager.h"
 #include "acoustic_bridge.h"
+#include "orin/frame_sender.h"
 
 #define DDL_BRIDGE_INTERVAL_MS 1000
 #define LWS_WAKER_INTERVAL_MS  20   /* kick the lws poll this often -> loop runs at ~50 Hz */
@@ -67,15 +68,22 @@ static volatile bool g_running = true;
 typedef struct
 {
     StreamingConfig config;
-    IPCConnection ipc;
     WebSocketServer ws;
     ProcessManager pm;
     DdlBridge* bridge;
-    bool python_connected;
     bool android_connected;
     bool streaming_active;
     AcousticBridge* acoustic_bridge;
+    FrameSender* sender;   // Orin H.265+SEI sender + H.264 app-preview (camera owner)
 } AppState;
+
+// Fired by the frame sender on the capture thread when a frame is assigned a
+// frame_id (before encode). Record the capture-time servo pose so a returning
+// Orin detection can be joined back to where the camera was pointing.
+static void on_sender_frame_captured(uint32_t frame_id, void *user)
+{
+    ddl_bridge_record_capture_pose((DdlBridge *)user, frame_id);
+}
 
 // ---------------------------------------------------------------------------
 // Waker thread: forces lws_service()'s poll() to return every LWS_WAKER_INTERVAL_MS
@@ -131,120 +139,170 @@ static void send_stream_ready(AppState *app)
 // publishing).  If it died, restart it against the now-warm camera (which emits
 // an SPS every ~1 s) and try again.  Returns true only once FFmpeg is confirmed
 // publishing.
+// Build and start the Orin frame sender: it OWNS the camera and fans the 1080p
+// capture out two ways — H.265+SEI over RTP to the Orin, and a software H.264
+// "app preview" written into the FIFO the app's FFmpeg reads. It also records
+// the capture-time servo pose per frame (on_sender_frame_captured) so returning
+// Orin detections join back to the right pose. Replaces person_streamer.py.
+static bool start_frame_sender(AppState *app)
+{
+    if (app->sender != NULL)
+        return true;
+
+    FrameSenderConfig cfg;
+    frame_sender_config_default(&cfg);
+    cfg.source            = (strcmp(app->config.camera_source, "test") == 0)
+                                ? FRAME_SENDER_SOURCE_VIDEOTEST
+                                : FRAME_SENDER_SOURCE_LIBCAMERA;
+    cfg.width             = 1920;
+    cfg.height            = 1080;
+    cfg.fps               = 30;
+    /* Keep 2 of the 4 cores free: x265 at superfast on all cores pinned the
+     * CPU at 0% idle, starving hostapd/mediaMTX/net softirq — the app's video
+     * froze even though the local FIFO->FFmpeg path kept 30 fps. ultrafast on
+     * a 2-core pool costs little Orin fps and leaves the system responsive. */
+    cfg.speed_preset      = "ultrafast";
+    cfg.x265_extra        = "pools=2";
+    cfg.orin_branch       = app->config.orin_enabled;
+    cfg.sink              = FRAME_SENDER_SINK_RTP_UDP;
+    cfg.host              = app->config.orin_host;
+    cfg.port              = app->config.orin_rtp_port;
+    cfg.app_preview       = true;
+    cfg.app_fifo_path     = app->config.video_path;   // the FIFO FFmpeg reads
+    cfg.app_width         = app->config.app_preview_width;
+    cfg.app_height        = app->config.app_preview_height;
+    cfg.app_fps           = app->config.app_preview_fps;
+    cfg.app_bitrate_kbps  = app->config.app_preview_bitrate_kbps;
+    cfg.app_speed_preset  = app->config.app_preview_preset;
+    cfg.on_frame_captured = on_sender_frame_captured;
+    cfg.user              = app->bridge;
+
+    app->sender = frame_sender_start(&cfg);
+    if (app->sender == NULL)
+    {
+        fprintf(stderr, "[MAIN] frame sender failed to start\n");
+        return false;
+    }
+    if (cfg.orin_branch)
+        printf("[MAIN] Frame sender up: %s -> H.264 FIFO + H.265+SEI RTP %s:%d\n",
+               cfg.source == FRAME_SENDER_SOURCE_VIDEOTEST ? "videotest" : "camera",
+               cfg.host, cfg.port);
+    else
+        printf("[MAIN] Frame sender up: %s -> H.264 FIFO only (Orin branch DISABLED"
+               " via orin_enabled=false)\n",
+               cfg.source == FRAME_SENDER_SOURCE_VIDEOTEST ? "videotest" : "camera");
+    return true;
+}
+
+static void stop_frame_sender(AppState *app)
+{
+    if (app->sender != NULL)
+    {
+        frame_sender_stop(app->sender);
+        app->sender = NULL;
+    }
+}
+
+// FFmpeg prints "Stream mapping:" (default loglevel) only after the input
+// probe succeeded AND the RTSP output was opened — i.e. it is really
+// publishing. "Still alive" is NOT enough: on a starved FIFO FFmpeg blocks
+// inside the probe read() indefinitely — running, publishing nothing.
+static bool ffmpeg_reports_publishing(void)
+{
+    FILE *f = fopen("/tmp/ffmpeg.log", "r");
+    if (f == NULL)
+        return false;
+    char line[512];
+    bool found = false;
+    while (fgets(line, sizeof(line), f) != NULL)
+    {
+        if (strstr(line, "Stream mapping:") != NULL)
+        {
+            found = true;
+            break;
+        }
+    }
+    fclose(f);
+    return found;
+}
+
+// Bring up the live camera pipeline (FFmpeg reading the FIFO + the frame sender
+// writing it) and VERIFY FFmpeg is actually publishing to mediaMTX before
+// returning. Started ONCE at start-up and kept running for the whole session
+// (not tied to Android connect/disconnect) — same reliability rationale as the
+// old picamera2 path: a fresh FIFO inode + a verify-and-retry loop. On a probe
+// failure we fully restart BOTH ends (FFmpeg + sender) against a fresh FIFO so
+// there is never a half-open FIFO (a dead reader would SIGPIPE the sender).
 static bool start_camera_stream(AppState *app)
 {
     if (app->streaming_active)
         return true;
-    if (!app->python_connected)
-        return false;
 
-    printf("[MAIN] Starting live camera pipeline...\n");
+    printf("[MAIN] Starting live camera pipeline (frame sender -> FIFO + Orin)...\n");
 
-    if (pm_is_ffmpeg_running(&app->pm))
-        pm_stop_ffmpeg(&app->pm);
-
-    // Fresh FIFO inode so FFmpeg reads a clean, SPS-led stream with no leftover
-    // data or stale writer from a previous session.
-    unlink(app->config.video_path);
-    if (mkfifo(app->config.video_path, 0666) != 0)
+    const int MAX_TRIES = 4;
+    for (int attempt = 1; attempt <= MAX_TRIES; attempt++)
     {
-        perror("[MAIN] mkfifo failed to recreate camera FIFO");
-        return false;
-    }
-
-    const int MAX_FFMPEG_TRIES = 4;
-    for (int attempt = 1; attempt <= MAX_FFMPEG_TRIES; attempt++)
-    {
-        if (pm_start_ffmpeg(&app->pm, &app->config) != 0)
+        // Clean slate: tear down both ends and give the FIFO a fresh inode.
+        stop_frame_sender(app);
+        if (pm_is_ffmpeg_running(&app->pm))
+            pm_stop_ffmpeg(&app->pm);
+        unlink(app->config.video_path);
+        if (mkfifo(app->config.video_path, 0666) != 0)
         {
-            fprintf(stderr, "[MAIN] Failed to start FFmpeg\n");
-            ipc_send_stop(&app->ipc);
+            perror("[MAIN] mkfifo failed to recreate camera FIFO");
             return false;
         }
 
-        // Give FFmpeg time to exec and reach the FIFO open() call.
-        usleep(500000);  // 500ms
-
-        if (attempt == 1)
+        // FFmpeg first: it opens the FIFO O_RDONLY and blocks until a writer
+        // (the sender's filesink) opens the write end — the rendezvous.
+        if (pm_start_ffmpeg(&app->pm, &app->config) != 0)
         {
-            // Bring up the camera (once).  On later attempts it is already running
-            // and feeding the FIFO, so we only restart FFmpeg against it.
-            if (ipc_send_start(&app->ipc,
-                               app->config.video_path,         // FIFO path Python writes
-                               app->config.video_duration_sec,
-                               app->config.video_fps,
-                               app->config.loop_video,
-                               app->config.detection_frame_interval) != 0)
+            fprintf(stderr, "[MAIN] Failed to start FFmpeg\n");
+            return false;
+        }
+        usleep(500000);  // let FFmpeg exec and reach the FIFO open()
+
+        // Sender opens the write end -> both unblock; H.264 flows into the FIFO
+        // and H.265+SEI flows to the Orin.
+        if (!start_frame_sender(app))
+        {
+            pm_stop_ffmpeg(&app->pm);
+            return false;
+        }
+
+        printf("[MAIN] Waiting for the stream to initialise (attempt %d/%d)...\n",
+               attempt, MAX_TRIES);
+
+        // Poll up to 8 s (probe needs ~2 s of stream data) for POSITIVE proof
+        // of publishing — FFmpeg's "Stream mapping:" in its log. FFmpeg merely
+        // being alive proves nothing: on a starved FIFO it blocks in the probe
+        // forever. If it exits, the probe failed -> full restart.
+        for (int waited_ms = 0; waited_ms < 8000; waited_ms += 250)
+        {
+            if (!pm_is_ffmpeg_running(&app->pm))
+                break;
+            if (ffmpeg_reports_publishing())
             {
-                fprintf(stderr, "[MAIN] Failed to send START to Python\n");
-                pm_stop_ffmpeg(&app->pm);
-                return false;
+                app->streaming_active = true;
+                printf("[MAIN] Live camera pipeline is publishing to mediaMTX\n");
+                return true;
             }
+            usleep(250000);
         }
 
-        // Wait for camera init + FFmpeg's probe (analyzeduration is 2 s).
-        printf("[MAIN] Waiting for camera and stream to initialise (attempt %d/%d)...\n",
-               attempt, MAX_FFMPEG_TRIES);
-        usleep(3000000);  // 3 s > FFmpeg's 2 s analyzeduration, so the probe has resolved
-
-        // FFmpeg still alive after the probe window => it found the stream and is
-        // publishing.  If it exited, the probe failed -> retry.
         if (pm_is_ffmpeg_running(&app->pm))
-        {
-            app->streaming_active = true;
-            printf("[MAIN] Live camera pipeline is publishing to mediaMTX\n");
-            return true;
-        }
-
-        printf("[MAIN] FFmpeg exited before publishing (probe failure); "
-               "retrying against the live camera...\n");
+            printf("[MAIN] FFmpeg alive but not publishing after 8 s — camera "
+                   "starved? Restarting both ends...\n");
+        else
+            printf("[MAIN] FFmpeg exited before publishing (probe failure); "
+                   "restarting both ends...\n");
     }
 
-    fprintf(stderr, "[MAIN] FFmpeg never started publishing after %d attempts\n",
-            MAX_FFMPEG_TRIES);
-    ipc_send_stop(&app->ipc);
+    fprintf(stderr, "[MAIN] Camera pipeline never published after %d attempts\n",
+            MAX_TRIES);
+    stop_frame_sender(app);
     return false;
-}
-
-// On-demand start for a *file* source: Python opens the file, then FFmpeg reads
-// it.  (Unlike the camera, a file stream is started when an app connects and
-// stopped when it disconnects -- there is no point streaming a file to nobody.)
-static bool start_file_stream(AppState *app)
-{
-    if (app->streaming_active)
-        return true;
-    if (!app->python_connected)
-        return false;
-
-    printf("[MAIN] Starting file stream...\n");
-
-    if (pm_is_ffmpeg_running(&app->pm))
-        pm_stop_ffmpeg(&app->pm);
-
-    if (ipc_send_start(&app->ipc,
-                       app->config.video_path,
-                       app->config.video_duration_sec,
-                       app->config.video_fps,
-                       app->config.loop_video,
-                       app->config.detection_frame_interval) != 0)
-    {
-        fprintf(stderr, "[MAIN] Failed to send START to Python\n");
-        return false;
-    }
-
-    usleep(100000);  // 100ms for Python to open the video file
-
-    if (pm_start_ffmpeg(&app->pm, &app->config) != 0)
-    {
-        fprintf(stderr, "[MAIN] Failed to start FFmpeg\n");
-        ipc_send_stop(&app->ipc);
-        return false;
-    }
-
-    printf("[MAIN] Waiting for stream to initialise...\n");
-    usleep(1000000);  // 1 second for FFmpeg to start publishing
-    app->streaming_active = true;
-    return true;
 }
 
 // Callback when Android connects via WebSocket
@@ -255,21 +313,10 @@ static void on_android_connect(void *user_data)
     printf("[MAIN] Android client connected!\n");
     app->android_connected = true;
 
-    if (!app->python_connected)
-    {
-        fprintf(stderr, "[MAIN] Python not connected yet; cannot serve stream\n");
-        return;
-    }
-
-    // For the live camera the pipeline is already running (started at start-up),
-    // so this is just "tell the app it's ready".  start_camera_stream() returns
-    // immediately when already streaming, and also recovers if the start-up
-    // attempt had failed.  File sources start on demand here.
-    bool ok = config_is_fifo(app->config.video_path)
-                  ? start_camera_stream(app)
-                  : start_file_stream(app);
-
-    if (ok)
+    // The live camera pipeline is already running (started at start-up), so this
+    // just tells the app it's ready. start_camera_stream() returns immediately
+    // when already streaming, and recovers if the start-up attempt had failed.
+    if (start_camera_stream(app))
         send_stream_ready(app);
     else
         fprintf(stderr, "[MAIN] Stream not available; not sending stream_ready\n");
@@ -292,32 +339,9 @@ static void on_android_disconnect(void *user_data)
     printf("[MAIN] Android client disconnected\n");
     app->android_connected = false;
 
-    // Live camera: keep the pipeline running so the stream stays up and the next
-    // connection is instant (and we avoid the FFmpeg/camera restart races that
-    // caused black screens).  File source: stop -- no point streaming to nobody.
-    if (!config_is_fifo(app->config.video_path) && app->streaming_active)
-    {
-        printf("[MAIN] Stopping file stream...\n");
-        if (app->python_connected)
-            ipc_send_stop(&app->ipc);
-        pm_stop_ffmpeg(&app->pm);
-        app->streaming_active = false;
-        printf("[MAIN] File stream stopped, waiting for new connection\n");
-    }
-}
-
-// Forward detection data from Python to Android
-static void forward_detection(AppState *app, const char *json, size_t len)
-{
-    if (app->android_connected)
-    {
-        if (ws_send_json(&app->ws, json, len) != 0)
-        {
-            fprintf(stderr, "[MAIN] Failed to forward detection to Android\n");
-        }
-        // Note: ws_send_json queues messages - they are flushed by the next
-        // ws_service() call at the bottom of the main loop.
-    }
+    // The live camera pipeline keeps running so the stream stays up and the next
+    // connection is instant (avoiding the FFmpeg/camera restart races that caused
+    // black screens). Detections come from the Orin regardless of app presence.
 }
 
 static void print_usage(const char *program)
@@ -338,6 +362,10 @@ int main(int argc, char *argv[])
     setvbuf(stdout, NULL, _IONBF, 0);  // Unbuffered stdout for real-time logs
     setvbuf(stderr, NULL, _IONBF, 0);  // Unbuffered stderr for real-time error logs
     fprintf(stderr, "[BUILD] compiled %s %s\n", __DATE__, __TIME__);
+
+    // Initialize GStreamer for the Orin frame sender (camera -> H.265+SEI -> Orin,
+    // and the H.264 app-preview branch -> FIFO).
+    gst_init(&argc, &argv);
 
     const char *config_path = DEFAULT_CONFIG_PATH;
 
@@ -364,7 +392,6 @@ int main(int argc, char *argv[])
 
     // Initialize application state
     AppState app = {
-        .python_connected = false,
         .android_connected = false,
         .streaming_active = false
     };
@@ -466,39 +493,14 @@ int main(int argc, char *argv[])
         // intentionally NOT returning 1 -- rest of system must run
     }
 
-    // Initialize Unix socket IPC
-    printf("[MAIN] Initializing IPC server...\n");
-    if (ipc_server_init(&app.ipc) != 0)
-    {
-        fprintf(stderr, "[MAIN] Failed to initialize IPC server\n");
-        g_running = false;
-        pthread_join(waker_tid, NULL);
-        ws_cleanup(&app.ws);
-        pm_cleanup(&app.pm);
-        return 1;
-    }
-
-    // Wait for Python detection script to connect
-    printf("[MAIN] Waiting for Python detection script to connect...\n");
-    printf("[MAIN] (Run 'python3 detection.py' in another terminal)\n\n");
-
-    if (ipc_accept_client(&app.ipc) != 0)
-    {
-        fprintf(stderr, "[MAIN] Failed to accept Python connection\n");
-        g_running = false;
-        pthread_join(waker_tid, NULL);
-        ipc_cleanup(&app.ipc);
-        ws_cleanup(&app.ws);
-        pm_cleanup(&app.pm);
-        return 1;
-    }
-    app.python_connected = true;
+    // Detection comes from the Orin over ZeroMQ (handled in the DDL bridge) — the
+    // local Python detector + its Unix-socket IPC are retired (see legacy/edgetpu).
 
     // Bring the live camera pipeline up NOW and keep it running for the whole
-    // session, independent of Android connect/disconnect.  Starting it once (and
-    // verifying FFmpeg is actually publishing) is what makes a fresh run + first
-    // connect reliable: by the time an app connects, the stream is already live,
-    // so connecting just sends stream_ready -- no per-connect FFmpeg probe race.
+    // session, independent of Android connect/disconnect. The frame sender owns
+    // the camera: H.264 preview -> FIFO -> FFmpeg -> mediaMTX -> app, and
+    // H.265+SEI -> RTP -> Orin. Starting it once (and verifying FFmpeg is
+    // publishing) is what makes a fresh run + first connect reliable.
     if (config_is_fifo(app.config.video_path))
     {
         if (!start_camera_stream(&app))
@@ -519,9 +521,6 @@ int main(int argc, char *argv[])
     // socket event arrives OR the waker thread cancels it (~20 ms).  So one loop
     // iteration is ~20 ms.  No usleep() is needed -- ws_service IS the pacer -- and
     // the loop is no longer gated on the Android app sending packets.
-    char msg_buffer[MAX_MSG_SIZE];
-    int total_processed = 0;  // Total detection messages processed
-
     while (g_running)
     {
         /* ITER-DIAG: stays SILENT on a healthy run.  With the waker, every
@@ -541,70 +540,17 @@ int main(int argc, char *argv[])
         }
         prev_iter = now_iter;
 
-        /* 1. Drain detection messages from Python (non-blocking) and queue them
-         *    for the Android app. */
-        if (app.python_connected && ipc_check_client_connected(&app.ipc))
-        {
-            int len;
-            int msg_count = 0;
-            int batch_limit = 10;  // Read up to 10 messages per batch
-
-            while (batch_limit-- > 0 &&
-                   (len = ipc_recv_message(&app.ipc, msg_buffer, sizeof(msg_buffer))) > 0)
-            {
-                msg_count++;
-                total_processed++;
-                forward_detection(&app, msg_buffer, len);   // queues for Android
-            }
-
-            if (msg_count > 0)
-            {
-                printf("[MAIN] Processed %d detection messages (total: %d)\n",
-                       msg_count, total_processed);
-            }
-
-            if (len < 0)
-            {
-                // Python disconnected
-                printf("[MAIN] Python detection script disconnected\n");
-                printf("[MAIN] Total detection messages processed: %d\n", total_processed);
-                app.python_connected = false;
-
-                if (app.streaming_active)
-                {
-                    pm_stop_ffmpeg(&app.pm);
-                    app.streaming_active = false;
-                }
-            }
-        }
-
-        /* 2. Emit a sensor_data frame (gated to once per period_ms inside). */
+        /* 1. Emit a sensor_data frame (gated to once per period_ms inside). */
         ddl_bridge_tick(app.bridge);
+
+        /* 2. Forward any Orin detections queued by the receiver thread to the
+         *    app (target_detection JSON). Cheap when the queue is empty. */
+        ddl_bridge_pump_detections(app.bridge);
 
         /* 3. Emit an acoustic event if one is pending (early-returns otherwise). */
         acoustic_bridge_tick(app.acoustic_bridge);
 
-        /* 4. File-source "playback ended" detection.  Must NOT apply to the live
-         *    camera/FIFO source -- there FFmpeg exiting is an error, not normal
-         *    end-of-stream, and sending STOP here would tear down the live camera
-         *    session (and could hit Python while it is blocked opening the FIFO). */
-        if (app.streaming_active && !app.config.loop_video &&
-            !config_is_fifo(app.config.video_path))
-        {
-            pm_check_processes(&app.pm);
-
-            if (!pm_is_ffmpeg_running(&app.pm))
-            {
-                printf("[MAIN] Video playback ended\n");
-                if (app.python_connected)
-                {
-                    ipc_send_stop(&app.ipc);
-                }
-                app.streaming_active = false;
-            }
-        }
-
-        /* 5. Service libwebsockets: flushes any messages queued in steps 1-3 and
+        /* 4. Service libwebsockets: flushes any messages queued above and
          *    processes incoming WS data.  Blocks until the waker cancels it
          *    (~20 ms) or a socket event arrives.  lws ignores the timeout value;
          *    the waker thread provides the real pacing. */
@@ -620,20 +566,18 @@ int main(int argc, char *argv[])
      * one LWS_WAKER_INTERVAL_MS. */
     pthread_join(waker_tid, NULL);
 
-    // Stop streaming if active
+    // Stop the sender FIRST (it drains EOS and closes the FIFO write end, and
+    // its on_frame_captured callback calls into the DDL bridge — so it must stop
+    // before ddl_bridge_stop below), then FFmpeg.
+    stop_frame_sender(&app);
     if (app.streaming_active)
     {
-        if (app.python_connected)
-        {
-            ipc_send_stop(&app.ipc);
-        }
         pm_stop_ffmpeg(&app.pm);
     }
 
     acoustic_bridge_stop(app.acoustic_bridge);
     ddl_bridge_stop(app.bridge);
 
-    ipc_cleanup(&app.ipc);
     ws_cleanup(&app.ws);
     pm_cleanup(&app.pm);
 

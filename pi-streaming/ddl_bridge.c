@@ -6,6 +6,7 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include <pthread.h>
 
 /* src/ headers */
 #include "util/event_bus/event_bus.h"
@@ -19,6 +20,21 @@
 #include "ddl/servo/servo_events.h"
 #include "ddl/servo/servo_config.h"
 
+/* Orin detection -> lock-on pipeline */
+#include "orin/pose_ring.h"
+#include "orin/detection_msg.h"
+#include "orin/aiming.h"
+#include "orin/orin_receiver.h"
+#include "orin/tracker.h"
+
+/* PULL-bind endpoint for detections returning from the Orin. The Orin
+ * PUSH-connects to this over the direct GigE link. Compile-time for now;
+ * promote to streaming_config.json if it needs to vary per deployment. */
+#define ORIN_DETECTION_ZMQ_ENDPOINT "tcp://0.0.0.0:5556"
+
+/* Depth of the detection->app forward queue (receiver thread -> main loop). */
+#define DET_FWD_QUEUE 16
+
 struct DdlBridge
 {
     WebSocketServer* ws;
@@ -30,7 +46,218 @@ struct DdlBridge
     bool             scheduler_started;
     bool             wind_offset_initialized;
     float            wind_sensor_zero_heading;
+
+    /* Orin detection -> lock-on pipeline. */
+    PoseRing*        pose_ring;     /* frame_id -> capture pose join buffer.  */
+    OrinReceiver*    orin_rx;       /* ZeroMQ PULL receiver (own thread).     */
+    Tracker*         tracker;       /* per-frame indices -> stable track ids. */
+    AimConfig        aim_cfg;       /* optics/frame/limits, set once at start.*/
+    pthread_mutex_t  lockon_mtx;    /* guards locked / locked_target_id.      */
+    bool             lockon_up;     /* lockon_mtx initialised (for teardown). */
+    bool             locked;        /* operator has locked on -> auto-follow. */
+    bool             has_locked_target_id;
+    char             locked_target_id[ORIN_ID_MAXLEN];
+    unsigned long    n_aim_updates; /* diag: servo targets pushed from dets.  */
+
+    /* Detection -> app forward queue. The Orin receiver thread serialises each
+     * detection message here; the main loop (ddl_bridge_pump_detections) drains
+     * it and ws_send_json's, keeping all WebSocket sends on the main thread. */
+    pthread_mutex_t  det_mtx;
+    bool             det_up;
+    int              det_head, det_tail, det_count;
+    char             det_queue[DET_FWD_QUEUE][WS_MAX_MSG_SIZE];
 };
+
+static unsigned long long now_ms_mono64(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000ULL +
+           (unsigned long long)(ts.tv_nsec / 1000000L);
+}
+
+/* Choose which detection to follow, keyed on the STABLE track id (ids[i]):
+ * the locked id if one was supplied, else the highest-confidence detection.
+ * Only CONFIRMED tracks (confirmed[i]) are lockable, so a one-frame false
+ * positive can't grab the servos. Returns an index or -1. */
+static int select_detection_index(const OrinDetectionMsg* msg,
+                                  bool has_id, const char* id,
+                                  const uint32_t* ids, const bool* confirmed)
+{
+    int   best      = -1;
+    float best_conf = -1.0f;
+    for (int i = 0; i < msg->num_detections; i++)
+    {
+        if (!confirmed[i])
+        {
+            continue;   /* tentative track: not lockable yet */
+        }
+        if (has_id)
+        {
+            char idbuf[ORIN_ID_MAXLEN];
+            snprintf(idbuf, sizeof(idbuf), "%u", ids[i]);
+            if (strcmp(idbuf, id) == 0)
+            {
+                return i;   /* stable id match wins immediately */
+            }
+        }
+        else if (msg->detections[i].confidence > best_conf)
+        {
+            best_conf = msg->detections[i].confidence;
+            best      = i;
+        }
+    }
+    return has_id ? -1 : best;
+}
+
+/* Serialise a parsed Orin detection message into the EXACT "target_detection"
+ * schema the app already consumes (compact, bbox in 1920x1080) — the same wire
+ * shape the retired Python detector produced, so the app contract is unchanged.
+ *
+ * When @ids is non-NULL the "id" field carries the STABLE track id ids[i]
+ * (instead of the Orin's per-frame index), and an OPTIONAL non-breaking
+ * "confirmed" bool is added from confirmed[i] (the app may ignore it, or dim
+ * tentative tracks / withhold the lock affordance). When @ids is NULL (a pose
+ * miss, no tracking this frame) the Orin's per-frame id is passed through and
+ * no "confirmed" field is emitted. Returns bytes written, or -1 on overflow. */
+static int build_app_detection_json(const OrinDetectionMsg* m,
+                                    const uint32_t* ids, const bool* confirmed,
+                                    char* out, size_t cap)
+{
+    int n = snprintf(out, cap,
+        "{\"type\":\"target_detection\",\"timestamp_ms\":%llu,\"detections\":[",
+        (unsigned long long)m->timestamp_ms);
+    if (n < 0 || (size_t)n >= cap) return -1;
+
+    for (int i = 0; i < m->num_detections; i++)
+    {
+        const OrinDetection* d = &m->detections[i];
+
+        char idbuf[ORIN_ID_MAXLEN];
+        const char* idstr = d->target_id;
+        if (ids != NULL)
+        {
+            snprintf(idbuf, sizeof(idbuf), "%u", ids[i]);
+            idstr = idbuf;
+        }
+
+        char cfield[24];
+        cfield[0] = '\0';
+        if (confirmed != NULL)
+        {
+            snprintf(cfield, sizeof(cfield), ",\"confirmed\":%s",
+                     confirmed[i] ? "true" : "false");
+        }
+
+        int k = snprintf(out + n, cap - (size_t)n,
+            "%s{\"id\":\"%s\",\"class\":\"%s\",\"confidence\":%.2f,"
+            "\"bbox\":{\"x\":%d,\"y\":%d,\"width\":%d,\"height\":%d}%s}",
+            i ? "," : "", idstr, d->cls, (double)d->confidence,
+            d->bbox_x, d->bbox_y, d->bbox_w, d->bbox_h, cfield);
+        if (k < 0 || (size_t)(n + k) >= cap) return -1;
+        n += k;
+    }
+    int k = snprintf(out + n, cap - (size_t)n, "]}");
+    if (k < 0 || (size_t)(n + k) >= cap) return -1;
+    return n + k;
+}
+
+/* Push a serialised detection line onto the receiver->main forward queue.
+ * Runs on the receiver thread; drops the oldest entry if the queue is full so
+ * the app always gets the freshest boxes. */
+static void det_enqueue(DdlBridge* b, const char* json, size_t len)
+{
+    if (!b->det_up || len == 0 || len >= WS_MAX_MSG_SIZE) return;
+
+    pthread_mutex_lock(&b->det_mtx);
+    if (b->det_count == DET_FWD_QUEUE)
+    {
+        b->det_tail = (b->det_tail + 1) % DET_FWD_QUEUE;
+        b->det_count--;
+    }
+    memcpy(b->det_queue[b->det_head], json, len);
+    b->det_queue[b->det_head][len] = '\0';
+    b->det_head = (b->det_head + 1) % DET_FWD_QUEUE;
+    b->det_count++;
+    pthread_mutex_unlock(&b->det_mtx);
+}
+
+/* Runs on the Orin receiver thread (see orin_receiver.h threading contract).
+ * Forwards every detection message to the app (unconditionally, for the box
+ * overlay), then drives the servos toward the locked target when locked. Only
+ * ddl_servo_set_target is touched for the servos (mutex-protected); the servo
+ * FSM is already in TARGET_LOCK and re-reads the target on its periodic
+ * DIRECTIONS tick, so updating the target makes it slew to follow. */
+static void orin_detection_handler(const OrinDetectionMsg* msg,
+                                   const PoseEntry* pose, void* user)
+{
+    DdlBridge* b = (DdlBridge*)user;
+
+    /* Run the tracker to turn the Orin's per-frame indices into STABLE ids —
+     * but only when the pose join HIT (the tracker maps each bbox to a world
+     * bearing using the pose). On a MISS we forward per-frame ids and do no
+     * tracking or servo work this frame (tracks coast; the sender tags every
+     * frame so misses are rare). */
+    uint32_t ids[ORIN_MAX_DETECTIONS];
+    bool     confirmed[ORIN_MAX_DETECTIONS];
+    bool     tracked = (pose != NULL && b->tracker != NULL);
+    if (tracked)
+    {
+        tracker_update(b->tracker, msg, pose, ids, confirmed);
+    }
+
+    /* App overlay feed: forward EVERY message (incl. empty detections, which
+     * clear the app's boxes) regardless of lock state. Stable ids + a
+     * non-breaking "confirmed" flag when tracked; per-frame ids on a miss.
+     * Sent on the main thread by ddl_bridge_pump_detections. */
+    char json[WS_MAX_MSG_SIZE];
+    int jn = build_app_detection_json(msg, tracked ? ids : NULL,
+                                      tracked ? confirmed : NULL,
+                                      json, sizeof(json));
+    if (jn > 0)
+    {
+        det_enqueue(b, json, (size_t)jn);
+    }
+
+    pthread_mutex_lock(&b->lockon_mtx);
+    bool locked = b->locked;
+    bool has_id = b->has_locked_target_id;
+    char id[ORIN_ID_MAXLEN];
+    memcpy(id, b->locked_target_id, sizeof(id));
+    pthread_mutex_unlock(&b->lockon_mtx);
+
+    /* Servo lock-follow needs: locked, a non-empty frame, and a pose (tracked).
+     * On a miss we skip — aiming a stale bbox against the wrong pose can nudge
+     * the servo the wrong way. */
+    if (!locked || !tracked || msg->num_detections == 0)
+    {
+        return;
+    }
+
+    int idx = select_detection_index(msg, has_id, id, ids, confirmed);
+    if (idx < 0)
+    {
+        return;   /* locked (confirmed) target not present in this frame */
+    }
+    const OrinDetection* det = &msg->detections[idx];
+
+    float pan  = pose->hor_angle;
+    float tilt = pose->ver_angle;
+
+    AimSolution sol;
+    if (!aim_compute(&b->aim_cfg, det->bbox_x, det->bbox_y,
+                     det->bbox_w, det->bbox_h, pan, tilt, &sol))
+    {
+        return;
+    }
+
+    /* aim_compute already clamped to the servo travel limits, so set_target
+     * won't reject the angles. */
+    if (ddl_servo_set_target(sol.pan_deg, sol.tilt_deg) == eSTATUS_SUCCESSFUL)
+    {
+        b->n_aim_updates++;
+    }
+}
 
 /* Monotonic clock — used for the period gate (immune to wall-clock changes). */
 static unsigned long now_ms_mono(void)
@@ -235,6 +462,50 @@ DdlBridge* ddl_bridge_start(WebSocketServer* ws, unsigned int period_ms)
     }
     b->scheduler_started = true;
 
+    /* Orin detection -> lock-on pipeline. NON-FATAL: if the pose ring or the
+     * ZeroMQ bind fails we still serve sensors/streaming, just without
+     * auto lock-on (the manual app commands keep working). */
+    aim_config_default(&b->aim_cfg);
+    /* Tracker borrows aim_cfg (a stable struct field) for its bbox->bearing
+     * geometry. NON-FATAL: without it, detections still forward with per-frame
+     * ids, just no stable-id lock-by-id. */
+    b->tracker = tracker_create(&b->aim_cfg);
+    if (b->tracker == NULL)
+    {
+        fprintf(stderr, "[BRIDGE] WARNING: tracker alloc failed; "
+                        "stable track ids disabled\n");
+    }
+    if (pthread_mutex_init(&b->det_mtx, NULL) == 0)
+    {
+        b->det_up = true;   /* detection->app forward queue ready */
+    }
+    if (pthread_mutex_init(&b->lockon_mtx, NULL) == 0)
+    {
+        b->lockon_up  = true;
+        b->pose_ring  = pose_ring_create(POSE_RING_DEFAULT_CAPACITY);
+        if (b->pose_ring != NULL)
+        {
+            b->orin_rx = orin_receiver_start(ORIN_DETECTION_ZMQ_ENDPOINT,
+                                             b->pose_ring,
+                                             orin_detection_handler, b);
+            if (b->orin_rx == NULL)
+            {
+                fprintf(stderr, "[BRIDGE] WARNING: Orin detection receiver "
+                                "failed to start; auto lock-on disabled\n");
+            }
+        }
+        else
+        {
+            fprintf(stderr, "[BRIDGE] WARNING: pose ring alloc failed; "
+                            "auto lock-on disabled\n");
+        }
+    }
+    else
+    {
+        fprintf(stderr, "[BRIDGE] WARNING: lock-on mutex init failed; "
+                        "auto lock-on disabled\n");
+    }
+
     printf("[BRIDGE] Started — emitting sensor_data every %u ms\n", period_ms);
     return b;
 }
@@ -321,6 +592,35 @@ void ddl_bridge_stop(DdlBridge* b)
         return;
     }
 
+    /* Stop the Orin receiver FIRST so no detection callback touches the servo
+     * or the DDL snapshot while we tear the app down below. */
+    if(b->orin_rx)
+    {
+        orin_receiver_stop(b->orin_rx);
+        b->orin_rx = NULL;
+    }
+    /* Receiver stopped -> no handler is running -> safe to free the tracker. */
+    if(b->tracker)
+    {
+        tracker_destroy(b->tracker);
+        b->tracker = NULL;
+    }
+    if(b->pose_ring)
+    {
+        pose_ring_destroy(b->pose_ring);
+        b->pose_ring = NULL;
+    }
+    if(b->lockon_up)
+    {
+        pthread_mutex_destroy(&b->lockon_mtx);
+        b->lockon_up = false;
+    }
+    if(b->det_up)
+    {
+        pthread_mutex_destroy(&b->det_mtx);
+        b->det_up = false;
+    }
+
     /* Tear down in reverse order, only what we actually brought up. */
     if(b->app_up)
     {
@@ -372,7 +672,7 @@ static bool json_get_number(const char* json, const char* key, double* out)
 
 void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
 {
-    (void)b; (void)len;
+    (void)len;
     if (json == NULL) return;
 
     char command[32];
@@ -396,6 +696,14 @@ void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
 
         if (ddl_servo_set_target((float)h, (float)v) != eSTATUS_SUCCESSFUL)
             return;
+        /* Manual aim overrides any auto-follow: stop tracking detections. */
+        if (b->lockon_up)
+        {
+            pthread_mutex_lock(&b->lockon_mtx);
+            b->locked = false;
+            b->has_locked_target_id = false;
+            pthread_mutex_unlock(&b->lockon_mtx);
+        }
         (void)util_event_bus_publish(eAO_SERVO, eSERVO_EVENT_NOISE_DETECTED);
         printf("[CMD] Slew to servo (%.1f, %.1f) + scan\n", h, v);
     }
@@ -404,9 +712,88 @@ void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
         char action[16] = {0};
         (void)json_get_string(json, "action", action, sizeof(action));
         if (strcmp(action, "lock") == 0)
+        {
+            /* Optional target id: follow only this id if given, else the
+             * highest-confidence detection. App may send "target_id" or "id". */
+            char tid[ORIN_ID_MAXLEN] = {0};
+            bool has_tid = json_get_string(json, "target_id", tid, sizeof(tid)) ||
+                           json_get_string(json, "id", tid, sizeof(tid));
+            if (b->lockon_up)
+            {
+                pthread_mutex_lock(&b->lockon_mtx);
+                b->locked               = true;
+                b->has_locked_target_id = has_tid;
+                if (has_tid)
+                {
+                    strncpy(b->locked_target_id, tid,
+                            sizeof(b->locked_target_id) - 1);
+                    b->locked_target_id[sizeof(b->locked_target_id) - 1] = '\0';
+                }
+                pthread_mutex_unlock(&b->lockon_mtx);
+            }
             (void)util_event_bus_publish(eAO_SERVO, eSERVO_EVENT_LOCK);
+            printf("[CMD] Lock on%s%s\n", has_tid ? " target " : "",
+                   has_tid ? tid : " (best detection)");
+        }
         else if (strcmp(action, "unlock") == 0)
+        {
+            if (b->lockon_up)
+            {
+                pthread_mutex_lock(&b->lockon_mtx);
+                b->locked               = false;
+                b->has_locked_target_id = false;
+                pthread_mutex_unlock(&b->lockon_mtx);
+            }
             (void)util_event_bus_publish(eAO_SERVO, eSERVO_EVENT_SCAN);
+            printf("[CMD] Unlock -> scan\n");
+        }
     }
     /* anything else (incl. "ping"): ignore */
+}
+
+void ddl_bridge_pump_detections(DdlBridge* b)
+{
+    if (b == NULL || !b->det_up)
+    {
+        return;
+    }
+
+    for (;;)
+    {
+        char line[WS_MAX_MSG_SIZE];
+        size_t len;
+
+        pthread_mutex_lock(&b->det_mtx);
+        if (b->det_count == 0)
+        {
+            pthread_mutex_unlock(&b->det_mtx);
+            break;
+        }
+        len = strlen(b->det_queue[b->det_tail]);
+        memcpy(line, b->det_queue[b->det_tail], len + 1);
+        b->det_tail = (b->det_tail + 1) % DET_FWD_QUEUE;
+        b->det_count--;
+        pthread_mutex_unlock(&b->det_mtx);
+
+        (void)ws_send_json(b->ws, line, len);
+    }
+}
+
+void ddl_bridge_record_capture_pose(DdlBridge* b, uint32_t frame_id)
+{
+    if (b == NULL || b->pose_ring == NULL)
+    {
+        return;
+    }
+
+    const DDLFrame* snap = app_get_ddl_snapshot();
+    if (snap == NULL)
+    {
+        return;
+    }
+
+    pose_ring_record(b->pose_ring, frame_id,
+                     snap->servo_frame.hor_angle,
+                     snap->servo_frame.ver_angle,
+                     now_ms_mono64());
 }

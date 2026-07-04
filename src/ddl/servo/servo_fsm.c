@@ -215,7 +215,14 @@ static float counts_to_pulse_us(uint16_t counts)
 
 static eStatus servo_set_angle(uint8_t channel, float angle_deg)
 {
-    angle_deg = clampf(angle_deg, SERVO_MIN_ANGLE_DEG, SERVO_MAX_ANGLE_DEG);
+    if(channel  == eSERVO_HORIZONTAL_CHANNEL)
+    {
+        angle_deg = clampf(angle_deg, SERVO_HORIZONTAL_MIN_ANGLE_DEG, SERVO_HORIZONTAL_MAX_ANGLE_DEG);
+    }
+    else if(channel == eSERVO_VERTICAL_CHANNEL)
+    {
+        angle_deg = clampf(angle_deg, SERVO_VERTICAL_MIN_ANGLE_DEG, SERVO_VERTICAL_MAX_ANGLE_DEG);
+    }
 
     float pulse_us =
         SERVO_MIN_PULSE_US +
@@ -295,7 +302,7 @@ static void servo_scan_operation()
 static eStatus servo_init_angles()
 {
     eStatus status;
-    servo_target_angles.angles.hor_angle = 0.0f;
+    servo_target_angles.angles.hor_angle = 90.0f;
     servo_target_angles.angles.ver_angle = 90.f;
     servo_target_angles.seq = 0;
     servo_scan_state_angles.hor_angle = 90.0f;

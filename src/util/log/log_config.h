@@ -54,7 +54,7 @@ typedef enum log_file_config_e
 	 * @note  If not defined by the user, it will be defined as 
 	 *        LOG_LEVEL_DEBUG
 	 */
-	#define LOG_LEVEL LOG_LEVEL_WARNING
+	#define LOG_LEVEL LOG_LEVEL_NONE
 #endif
 
 #if LOG_LEVEL < LOG_LEVEL_DEBUG || LOG_LEVEL > LOG_LEVEL_NONE
