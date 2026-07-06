@@ -58,4 +58,18 @@ void ddl_servo_delete(void);
  */
 eStatus ddl_servo_set_target(float hor_angle, float ver_angle);
 
+/**
+ * @brief   Read the last angles actually commanded to the servos.
+ * @details Always fresh (updated the instant the FSM drives the PWM
+ *          controller), unlike the broadcaster snapshot which is refreshed
+ *          only once per scheduler cycle. Use for capture-time pose stamping.
+ * @param   hor_angle Out: last commanded horizontal angle, in degrees.
+ * @param   ver_angle Out: last commanded vertical angle, in degrees.
+ * @returns A value from @ref eStatus.
+ * @retval  eSTATUS_SUCCESSFUL      successful execution
+ * @retval  eSTATUS_NULL_PARAM      an out pointer is NULL
+ * @retval  eSTATUS_ACTION_FAILED   servo FSM not started yet
+ */
+eStatus ddl_servo_get_pose(float* hor_angle, float* ver_angle);
+
 #endif

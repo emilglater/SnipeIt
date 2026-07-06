@@ -69,6 +69,20 @@ void servo_target_lock_state(FSM* fsm, Event* event);
 eStatus servo_fsm_set_target(float hor_angle, float ver_angle);
 
 /**
+ * @brief   Read the last angles actually commanded to the servos.
+ * @details Updated the instant the FSM writes the PWM controller, so it is
+ *          always fresh (the broadcaster snapshot can be a full scheduler
+ *          cycle stale). Intended for capture-time pose stamping.
+ * @param   hor_angle Out: last commanded horizontal angle, in degrees.
+ * @param   ver_angle Out: last commanded vertical angle, in degrees.
+ * @returns A value from @ref eStatus.
+ * @retval  eSTATUS_SUCCESSFUL      successful execution
+ * @retval  eSTATUS_NULL_PARAM      an out pointer is NULL
+ * @retval  eSTATUS_ACTION_FAILED   mutex not initialized (FSM not started)
+ */
+eStatus servo_fsm_get_pose(float* hor_angle, float* ver_angle);
+
+/**
  * @brief   Releases the servo's FSM resources.
  * @details For now it only destroys a mutex used by the FSM.
  */

@@ -35,6 +35,19 @@
 /* Depth of the detection->app forward queue (receiver thread -> main loop). */
 #define DET_FWD_QUEUE 16
 
+/* Slew-settling gate: when the commanded pose jumps more than this between
+ * two consecutive captured frames (a 10-deg scan step or a lock slew), the
+ * camera is physically mid-move for a while after, so bearings computed from
+ * those frames are garbage. Detections whose capture time falls inside the
+ * settle window skip the tracker/aiming (tracks coast through it: coast is
+ * 1.5 s, the scan dwell 2 s, so ids survive scan steps). Lock-follow's small
+ * per-detection corrections stay under the threshold and are not gated. */
+#define POSE_SETTLE_JUMP_DEG 3.0f
+#define POSE_SETTLE_MS       300u
+
+/* Period of the periodic pipeline stats line (0 disables). */
+#define BRIDGE_STATS_PERIOD_MS 5000u
+
 struct DdlBridge
 {
     WebSocketServer* ws;
@@ -57,7 +70,21 @@ struct DdlBridge
     bool             locked;        /* operator has locked on -> auto-follow. */
     bool             has_locked_target_id;
     char             locked_target_id[ORIN_ID_MAXLEN];
-    unsigned long    n_aim_updates; /* diag: servo targets pushed from dets.  */
+
+    /* Slew-settling gate. last_pose_* are only touched by the capture thread;
+     * unsettled_until_ms is written there and read by the Orin receiver
+     * thread, so it goes through __atomic ops. */
+    bool             have_last_pose;
+    float            last_pose_pan, last_pose_tilt;
+    uint64_t         unsettled_until_ms;
+
+    /* Pipeline counters (mixed writer threads -> __atomic ops; drained by the
+     * stats line on the main thread). */
+    unsigned long    n_frames;      /* frames pose-stamped (capture thread).  */
+    unsigned long    n_orin_msgs;   /* detection msgs received (rx thread).   */
+    unsigned long    n_pose_miss;   /* msgs whose frame_id->pose join missed. */
+    unsigned long    n_slew_skip;   /* msgs gated by the settling window.     */
+    unsigned long    n_aim_updates; /* servo targets pushed from detections.  */
 
     /* Detection -> app forward queue. The Orin receiver thread serialises each
      * detection message here; the main loop (ddl_bridge_pump_detections) drains
@@ -201,6 +228,28 @@ static void orin_detection_handler(const OrinDetectionMsg* msg,
     uint32_t ids[ORIN_MAX_DETECTIONS];
     bool     confirmed[ORIN_MAX_DETECTIONS];
     bool     tracked = (pose != NULL && b->tracker != NULL);
+
+    __atomic_fetch_add(&b->n_orin_msgs, 1UL, __ATOMIC_RELAXED);
+    if (pose == NULL)
+    {
+        __atomic_fetch_add(&b->n_pose_miss, 1UL, __ATOMIC_RELAXED);
+    }
+
+    /* Slew-settling gate: if this frame was captured inside the settle window
+     * after a big commanded-pose jump, its recorded pose is the jump's END
+     * angles while the camera was physically mid-move. Treat it like a pose
+     * miss: forward the raw boxes, no tracker/servo work, tracks coast. */
+    if (tracked)
+    {
+        uint64_t until = __atomic_load_n(&b->unsettled_until_ms, __ATOMIC_RELAXED);
+        if (pose->capture_ts_ms < until &&
+            pose->capture_ts_ms + POSE_SETTLE_MS >= until)
+        {
+            tracked = false;
+            __atomic_fetch_add(&b->n_slew_skip, 1UL, __ATOMIC_RELAXED);
+        }
+    }
+
     if (tracked)
     {
         tracker_update(b->tracker, msg, pose, ids, confirmed);
@@ -252,10 +301,13 @@ static void orin_detection_handler(const OrinDetectionMsg* msg,
     }
 
     /* aim_compute already clamped to the servo travel limits, so set_target
-     * won't reject the angles. */
+     * won't reject the angles. TARGET_UPDATE makes the lock state apply it
+     * NOW: without it the target is only sampled on the scheduler's 2 s
+     * DIRECTIONS tick, so follow moved in one big jump per 2 s. */
     if (ddl_servo_set_target(sol.pan_deg, sol.tilt_deg) == eSTATUS_SUCCESSFUL)
     {
-        b->n_aim_updates++;
+        __atomic_fetch_add(&b->n_aim_updates, 1UL, __ATOMIC_RELAXED);
+        (void)util_event_bus_publish(eAO_SERVO, eSERVO_EVENT_TARGET_UPDATE);
     }
 }
 
@@ -517,29 +569,29 @@ void ddl_bridge_tick(DdlBridge* b)
     static unsigned long diag_skipped_no_client    = 0UL;
     static unsigned long diag_skipped_gate_not_met = 0UL;
     static unsigned long diag_emitted              = 0UL;
-    static unsigned long diag_last_report_ms       = 0UL;
+    // static unsigned long diag_last_report_ms       = 0UL;
 
     diag_total_calls++;
 
     /* Report once per wall-second, regardless of which return path runs. */
-    unsigned long diag_now_ms = now_ms_mono();
-    if(diag_now_ms - diag_last_report_ms >= 1000UL)
-    {
-        fprintf(stderr,
-            "[BRIDGE-DIAG] t_mono=%lums calls=%lu no_client=%lu "
-            "gated=%lu emitted=%lu\n",
-            diag_now_ms,
-            diag_total_calls,
-            diag_skipped_no_client,
-            diag_skipped_gate_not_met,
-            diag_emitted);
+    // unsigned long diag_now_ms = now_ms_mono();
+    // if(diag_now_ms - diag_last_report_ms >= 1000UL)
+    // {
+    //     fprintf(stderr,
+    //         "[BRIDGE-DIAG] t_mono=%lums calls=%lu no_client=%lu "
+    //         "gated=%lu emitted=%lu\n",
+    //         diag_now_ms,
+    //         diag_total_calls,
+    //         diag_skipped_no_client,
+    //         diag_skipped_gate_not_met,
+    //         diag_emitted);
 
-        diag_total_calls          = 0UL;
-        diag_skipped_no_client    = 0UL;
-        diag_skipped_gate_not_met = 0UL;
-        diag_emitted              = 0UL;
-        diag_last_report_ms       = diag_now_ms;
-    }
+    //     diag_total_calls          = 0UL;
+    //     diag_skipped_no_client    = 0UL;
+    //     diag_skipped_gate_not_met = 0UL;
+    //     diag_emitted              = 0UL;
+    //     diag_last_report_ms       = diag_now_ms;
+    // }
     /* ===== END DIAG ===== */
 
     if(b == NULL || !b->scheduler_started)
@@ -751,12 +803,55 @@ void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
     /* anything else (incl. "ping"): ignore */
 }
 
+/* Periodic one-line pipeline health report (rates over the last period).
+ * cap = frames pose-stamped/s (== capture+encode fps), orin = detection
+ * msgs/s back from the Orin, miss = pose-join misses, slew_skip = msgs
+ * gated by the settling window, aim = servo follow updates pushed. */
+static void bridge_stats_tick(DdlBridge* b)
+{
+    static uint64_t      last_ms;
+    static unsigned long last_frames, last_msgs, last_miss, last_skip, last_aim;
+
+    uint64_t now = now_ms_mono64();
+    if (last_ms == 0)
+    {
+        last_ms = now;
+        return;
+    }
+    if (now - last_ms < BRIDGE_STATS_PERIOD_MS)
+    {
+        return;
+    }
+
+    unsigned long f  = __atomic_load_n(&b->n_frames,      __ATOMIC_RELAXED);
+    unsigned long m  = __atomic_load_n(&b->n_orin_msgs,   __ATOMIC_RELAXED);
+    unsigned long pm = __atomic_load_n(&b->n_pose_miss,   __ATOMIC_RELAXED);
+    unsigned long sk = __atomic_load_n(&b->n_slew_skip,   __ATOMIC_RELAXED);
+    unsigned long au = __atomic_load_n(&b->n_aim_updates, __ATOMIC_RELAXED);
+
+    float dt_s = (float)(now - last_ms) / 1000.0f;
+    printf("[BRIDGE] stats: cap=%.1f fps  orin=%.1f msg/s  miss=%lu  "
+           "slew_skip=%lu  aim=%lu  (last %.0fs)\n",
+           (float)(f - last_frames) / dt_s,
+           (float)(m - last_msgs)   / dt_s,
+           pm - last_miss, sk - last_skip, au - last_aim, (double)dt_s);
+
+    last_ms     = now;
+    last_frames = f;
+    last_msgs   = m;
+    last_miss   = pm;
+    last_skip   = sk;
+    last_aim    = au;
+}
+
 void ddl_bridge_pump_detections(DdlBridge* b)
 {
     if (b == NULL || !b->det_up)
     {
         return;
     }
+
+    bridge_stats_tick(b);
 
     for (;;)
     {
@@ -776,6 +871,8 @@ void ddl_bridge_pump_detections(DdlBridge* b)
         pthread_mutex_unlock(&b->det_mtx);
 
         (void)ws_send_json(b->ws, line, len);
+        // Show the detection JSON on the console for debugging, but don't spam it.
+        printf("[BRIDGE] Forwarded detection JSON: %s\n\n", line);
     }
 }
 
@@ -786,14 +883,36 @@ void ddl_bridge_record_capture_pose(DdlBridge* b, uint32_t frame_id)
         return;
     }
 
-    const DDLFrame* snap = app_get_ddl_snapshot();
-    if (snap == NULL)
+    /* Live commanded angles, NOT the broadcaster snapshot: the snapshot is
+     * refreshed once per 2 s scheduler cycle, so after a scan step it kept
+     * stamping frames with the pre-step pose -> ~10-deg bearing errors ->
+     * full track churn on every step. */
+    float pan, tilt;
+    if (ddl_servo_get_pose(&pan, &tilt) != eSTATUS_SUCCESSFUL)
     {
-        return;
+        const DDLFrame* snap = app_get_ddl_snapshot();
+        if (snap == NULL)
+        {
+            return;
+        }
+        pan  = snap->servo_frame.hor_angle;
+        tilt = snap->servo_frame.ver_angle;
     }
 
-    pose_ring_record(b->pose_ring, frame_id,
-                     snap->servo_frame.hor_angle,
-                     snap->servo_frame.ver_angle,
-                     now_ms_mono64());
+    uint64_t now = now_ms_mono64();
+
+    /* Open the slew-settling window when the pose jumps between frames. */
+    if (b->have_last_pose &&
+        (fabsf(pan  - b->last_pose_pan)  > POSE_SETTLE_JUMP_DEG ||
+         fabsf(tilt - b->last_pose_tilt) > POSE_SETTLE_JUMP_DEG))
+    {
+        __atomic_store_n(&b->unsettled_until_ms, now + POSE_SETTLE_MS,
+                         __ATOMIC_RELAXED);
+    }
+    b->last_pose_pan  = pan;
+    b->last_pose_tilt = tilt;
+    b->have_last_pose = true;
+
+    __atomic_fetch_add(&b->n_frames, 1UL, __ATOMIC_RELAXED);
+    pose_ring_record(b->pose_ring, frame_id, pan, tilt, now);
 }

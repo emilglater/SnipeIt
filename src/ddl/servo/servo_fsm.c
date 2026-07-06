@@ -30,10 +30,18 @@ typedef struct
 static TimerArg timer_arg;
 
 static ServoAngles servo_scan_state_angles;
-static bool angle_direction;
+static bool angle_direction_hor;
+static bool angle_direction_ver;
 
 static ServoTarget servo_target_angles;
 static void* servo_target_mutex;
+
+/* Last angles actually commanded to the PCA9685, published for readers on
+ * other threads (the streaming bridge stamps each captured frame with this
+ * pose). Guarded by servo_target_mutex. */
+static ServoAngles servo_commanded_angles = { 90.0f, 110.0f };
+
+static uint8_t step_counter;
 
 static void sleep_us(long us)
 {
@@ -259,11 +267,14 @@ static eStatus servo_set_both_angles(ServoObject* aobj, ServoAngles angles)
         return status;
     }
     status = servo_set_angle(eSERVO_VERTICAL_CHANNEL, angles.ver_angle);
-    
+
     if(status == eSTATUS_SUCCESSFUL)
     {
         aobj->frame->hor_angle = angles.hor_angle;
         aobj->frame->ver_angle = angles.ver_angle;
+        osal_mutex_lock(servo_target_mutex);
+        servo_commanded_angles = angles;
+        osal_mutex_unlock(servo_target_mutex);
     }
 
     return status;
@@ -272,28 +283,49 @@ static eStatus servo_set_both_angles(ServoObject* aobj, ServoAngles angles)
 /* Implementing Serpantine scan */
 static void servo_scan_operation()
 {
-    if(angle_direction == SERVO_INCREASE_ANGLE && 
+    if(angle_direction_hor == SERVO_INCREASE_ANGLE && 
         servo_scan_state_angles.hor_angle < SERVO_HORIZONTAL_MAX_ANGLE_DEG)
     {
-        servo_scan_state_angles.hor_angle += SERVO_STEP_ANGLE;
+        if(SERVO_HORIZONTAL_ENABLE)
+        {
+            servo_scan_state_angles.hor_angle += SERVO_STEP_ANGLE;
+        }
     }
-    else if(angle_direction == SERVO_DECREASE_ANGLE &&
+    else if(angle_direction_hor == SERVO_DECREASE_ANGLE &&
         servo_scan_state_angles.hor_angle > SERVO_HORIZONTAL_MIN_ANGLE_DEG)
     {
-        servo_scan_state_angles.hor_angle -= SERVO_STEP_ANGLE;
+        if(SERVO_HORIZONTAL_ENABLE)
+        {
+            servo_scan_state_angles.hor_angle -= SERVO_STEP_ANGLE;
+        }
     }
     else
     {
-        if(servo_scan_state_angles.ver_angle < SERVO_VERTICAL_MAX_ANGLE_DEG)
+        if(angle_direction_ver == SERVO_INCREASE_ANGLE &&
+            servo_scan_state_angles.ver_angle < SERVO_VERTICAL_MAX_ANGLE_DEG)
         {
-            servo_scan_state_angles.ver_angle += SERVO_STEP_ANGLE;
-            angle_direction = !angle_direction;
+            if(SERVO_VERTICAL_ENABLE)
+            {
+                servo_scan_state_angles.ver_angle += SERVO_STEP_ANGLE;
+            }
+            angle_direction_hor = !angle_direction_hor;
+        }
+        else if(angle_direction_ver == SERVO_DECREASE_ANGLE &&
+                servo_scan_state_angles.ver_angle > SERVO_VERTICAL_MIN_ANGLE_DEG)
+        {
+            if(SERVO_VERTICAL_ENABLE)
+            {
+                servo_scan_state_angles.ver_angle -= SERVO_STEP_ANGLE;
+            }
+            angle_direction_hor = !angle_direction_hor;
         }
         else
         {
-            servo_scan_state_angles.hor_angle = SERVO_HORIZONTAL_MIN_ANGLE_DEG;
-            servo_scan_state_angles.ver_angle = SERVO_VERTICAL_MIN_ANGLE_DEG;
-            angle_direction = SERVO_INCREASE_ANGLE;
+            //servo_scan_state_angles.hor_angle = SERVO_HORIZONTAL_MIN_ANGLE_DEG;
+            //servo_scan_state_angles.ver_angle = SERVO_VERTICAL_MIN_ANGLE_DEG;
+            //angle_direction_hor = SERVO_INCREASE_ANGLE;
+            angle_direction_ver = !angle_direction_ver;
+            angle_direction_hor = !angle_direction_hor;
         }
     }
 }
@@ -303,17 +335,24 @@ static eStatus servo_init_angles()
 {
     eStatus status;
     servo_target_angles.angles.hor_angle = 90.0f;
-    servo_target_angles.angles.ver_angle = 90.f;
+    servo_target_angles.angles.ver_angle = 110.0f;
     servo_target_angles.seq = 0;
     servo_scan_state_angles.hor_angle = 90.0f;
-    servo_scan_state_angles.ver_angle = 90.0f;
-    angle_direction = SERVO_INCREASE_ANGLE;
+    servo_scan_state_angles.ver_angle = 110.0f;
+    angle_direction_hor = SERVO_INCREASE_ANGLE;
+    angle_direction_ver = SERVO_INCREASE_ANGLE;
     status = servo_set_angle(eSERVO_HORIZONTAL_CHANNEL, servo_scan_state_angles.hor_angle);
     if(status)
     {
         return status;
     }
     status = servo_set_angle(eSERVO_VERTICAL_CHANNEL, servo_scan_state_angles.ver_angle);
+    if(status == eSTATUS_SUCCESSFUL)
+    {
+        osal_mutex_lock(servo_target_mutex);
+        servo_commanded_angles = servo_scan_state_angles;
+        osal_mutex_unlock(servo_target_mutex);
+    }
     return status;
 }
 
@@ -356,6 +395,28 @@ eStatus servo_fsm_set_target(float hor_angle, float ver_angle)
     servo_target_angles.angles.hor_angle = hor_angle;
     servo_target_angles.angles.ver_angle = ver_angle;
     servo_target_angles.seq++;
+    osal_mutex_unlock(servo_target_mutex);
+
+    return eSTATUS_SUCCESSFUL;
+}
+
+/* Public getter for the last COMMANDED pose. The scan/lock states update it
+ * the instant they write the PCA9685, so unlike the broadcaster snapshot
+ * (refreshed once per scheduler cycle) it is never stale. */
+eStatus servo_fsm_get_pose(float* hor_angle, float* ver_angle)
+{
+    if(hor_angle == NULL || ver_angle == NULL)
+    {
+        return eSTATUS_NULL_PARAM;
+    }
+    if(servo_target_mutex == NULL)
+    {
+        return eSTATUS_ACTION_FAILED;
+    }
+
+    osal_mutex_lock(servo_target_mutex);
+    *hor_angle = servo_commanded_angles.hor_angle;
+    *ver_angle = servo_commanded_angles.ver_angle;
     osal_mutex_unlock(servo_target_mutex);
 
     return eSTATUS_SUCCESSFUL;
@@ -445,6 +506,7 @@ void servo_scan_state(FSM* fsm, Event* event)
     {
     case eFSM_EVENT_ENTRY:
         LOG_DEBUG("SCAN entry");
+        step_counter = 0;
         if(servo_set_both_angles(aobj, servo_scan_state_angles))
         {
             LOG_ERROR("Failed to set servos' angles");
@@ -452,13 +514,18 @@ void servo_scan_state(FSM* fsm, Event* event)
         break;
     case eSERVO_EVENT_DIRECTIONS:
         LOG_DEBUG("Directions event received");
-        servo_scan_operation();
-        if(servo_set_both_angles(aobj, servo_scan_state_angles))
-        {
-            LOG_ERROR("Failed to set servos' angles");
-            (void)servo_get_angle(eSERVO_HORIZONTAL_CHANNEL, &servo_scan_state_angles.hor_angle);
-            (void)servo_get_angle(eSERVO_VERTICAL_CHANNEL, &servo_scan_state_angles.ver_angle);
-        }
+        step_counter++;
+        // if(step_counter >= SERVO_COUNT_FOR_STEP)
+        // {
+            servo_scan_operation();
+            if(servo_set_both_angles(aobj, servo_scan_state_angles))
+            {
+                LOG_ERROR("Failed to set servos' angles");
+                (void)servo_get_angle(eSERVO_HORIZONTAL_CHANNEL, &servo_scan_state_angles.hor_angle);
+                (void)servo_get_angle(eSERVO_VERTICAL_CHANNEL, &servo_scan_state_angles.ver_angle);
+            }
+            step_counter = 0;
+        // }
         break;
     case eSERVO_EVENT_NOISE_DETECTED:
         LOG_DEBUG("Noise-detected event received");
@@ -468,8 +535,12 @@ void servo_scan_state(FSM* fsm, Event* event)
         LOG_DEBUG("Lock event received");
         (void)util_fsm_transition(fsm, servo_target_lock_state);
         break;
+    case eSERVO_EVENT_TARGET_UPDATE:
+        /* Only meaningful in TARGET_LOCK; a late one can land here right
+         * after an unlock. Ignore silently. */
+        break;
     default:
-        LOG_WARNING("Unknown event type %u", event->type); 
+        LOG_WARNING("Unknown event type %u", event->type);
     }
 }
 
@@ -491,6 +562,7 @@ void servo_noise_scan_state(FSM* fsm, Event* event)
         (void)osal_timer_arm(aobj->timer, SERVO_MAX_ROTATION_DURATION_MS, eTIMER_TYPE_ONCE);
         break;
     case eSERVO_EVENT_DIRECTIONS:
+    case eSERVO_EVENT_TARGET_UPDATE:
         // Nothing to do in with this event. We wait on eSERVO_EVENT_ROTATION_TIMEOUT
         // to assure the servos finished rotating.
         break;
@@ -529,8 +601,12 @@ void servo_target_lock_state(FSM* fsm, Event* event)
             LOG_ERROR("Failed to set servos' angles");
         }
         break;
+    /* TARGET_UPDATE is published by the streaming bridge on every fresh aim
+     * solution (detection rate, 2-8 Hz) so lock-follow corrects in small
+     * steps instead of one accumulated jump per 2 s scheduler DIRECTIONS. */
     case eSERVO_EVENT_DIRECTIONS:
-        LOG_DEBUG("Directions event received");
+    case eSERVO_EVENT_TARGET_UPDATE:
+        LOG_DEBUG("Directions/target-update event received");
         servo_copy_target(&target_copy);
         if(last_seq == target_copy.seq)
             break;

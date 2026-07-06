@@ -49,12 +49,16 @@ void aim_config_default(AimConfig *cfg)
     cfg->vfov_deg     = AIM_DEFAULT_VFOV_DEG;
     cfg->frame_w      = AIM_DEFAULT_FRAME_W;
     cfg->frame_h      = AIM_DEFAULT_FRAME_H;
-    /* Signs VERIFIED on the rig (2026-07-01): commanding pan 90->130 turned the
-     * camera LEFT, so a right-of-image target must LOWER the pan angle ->
-     * pan_sign=-1. Commanding tilt 90->130 pitched the camera UP, so a
-     * bottom-of-image target must lower the tilt angle -> tilt_sign=-1. */
+    /* Signs VERIFIED on the rig: pan on 2026-07-01 (commanding pan 90->130
+     * turned the camera LEFT, so a right-of-image target must LOWER the pan
+     * angle -> pan_sign=-1). Tilt RE-verified 2026-07-06 after the vertical
+     * mount changed (range now 70..150, level ~110): increasing the tilt
+     * angle now pitches the camera DOWN, so a bottom-of-image target must
+     * RAISE the tilt angle -> tilt_sign=+1. (The old -1 drove the tilt away
+     * from the target into the 70-deg clamp on lock.) Re-verify both signs
+     * with a manual jog whenever a servo axis is remounted. */
     cfg->pan_sign     = -1.0f;
-    cfg->tilt_sign    = -1.0f;
+    cfg->tilt_sign    = +1.0f;
     cfg->pan_min_deg  = SERVO_HORIZONTAL_MIN_ANGLE_DEG;
     cfg->pan_max_deg  = SERVO_HORIZONTAL_MAX_ANGLE_DEG;
     cfg->tilt_min_deg = SERVO_VERTICAL_MIN_ANGLE_DEG;

@@ -32,7 +32,8 @@ static Event servo_subscribe_events[] = {
     { .type = eSERVO_EVENT_SCAN },
     { .type = eSERVO_EVENT_DIRECTIONS },
     { .type = eSERVO_EVENT_NOISE_DETECTED },
-    { .type = eSERVO_EVENT_LOCK }
+    { .type = eSERVO_EVENT_LOCK },
+    { .type = eSERVO_EVENT_TARGET_UPDATE }
 };
 
 static Event temperature_humidity_subscribe_events[] = {

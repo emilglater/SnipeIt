@@ -8,7 +8,7 @@
     "loop_video": false,
     "detection_frame_interval": 20,
     "camera_source": "camera",
-    "orin_enabled": false,
+    "orin_enabled": true,
     "orin_host": "10.42.0.2",
     "orin_rtp_port": 5600,
     "app_preview_preset": "ultrafast",

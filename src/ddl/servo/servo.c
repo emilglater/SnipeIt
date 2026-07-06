@@ -53,3 +53,8 @@ eStatus ddl_servo_set_target(float hor_angle, float ver_angle)
 {
     return servo_fsm_set_target(hor_angle, ver_angle);
 }
+
+eStatus ddl_servo_get_pose(float* hor_angle, float* ver_angle)
+{
+    return servo_fsm_get_pose(hor_angle, ver_angle);
+}

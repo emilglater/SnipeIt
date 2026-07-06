@@ -162,7 +162,14 @@ static bool start_frame_sender(AppState *app)
      * froze even though the local FIFO->FFmpeg path kept 30 fps. ultrafast on
      * a 2-core pool costs little Orin fps and leaves the system responsive. */
     cfg.speed_preset      = "ultrafast";
-    cfg.x265_extra        = "pools=2";
+    /* Deterministic 12-frame closed GOP: the Orin can only start (or recover)
+     * decoding at a keyframe, so the cadence must be pinned — scenecut off,
+     * closed GOP — not left to x265's scene-adaptive insertion. 12 frames is
+     * ~5 s worst-case blind time at the measured ~2.4 fps encode rate (keyint
+     * counts FRAMES, so wall-clock shrinks when light/fps improves). Keyframe
+     * bitrate cost is ~+4%. See orin/HANDOFF_PI_GOP_FIX.md. */
+    cfg.key_int_max       = 12;
+    cfg.x265_extra        = "pools=2:keyint=12:min-keyint=12:scenecut=0:open-gop=0";
     cfg.orin_branch       = app->config.orin_enabled;
     cfg.sink              = FRAME_SENDER_SINK_RTP_UDP;
     cfg.host              = app->config.orin_host;
