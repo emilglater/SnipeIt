@@ -194,6 +194,8 @@ int acoustic_bridge_tick(AcousticBridge* b)
 
     if (n > 0 && (size_t)n < sizeof(json))
     {
+        printf("[EVENT] %s\n", json);
+        fflush(stdout);
         if (ws_send_json(b->ws, json, (size_t)n) != 0)
         {
             fprintf(stderr, "[ACOUSTIC] ws_send_json failed (queue full?)\n");

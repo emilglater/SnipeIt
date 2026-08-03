@@ -59,7 +59,7 @@
 #define SERVO_INCREASE_ANGLE    true
 
 #define SERVO_VERTICAL_ENABLE   false
-#define SERVO_HORIZONTAL_ENABLE false
+#define SERVO_HORIZONTAL_ENABLE true
 
 #define SERVO_COUNT_FOR_STEP    0
 
