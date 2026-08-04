@@ -1,0 +1,34 @@
+--- src/util/active_object/active_object.c
++++ src/util/active_object/active_object.c
+@@ -3,6 +3,9 @@
+ /* Standard libraries */
+ #include <stddef.h>
+ 
++/* User libraries */
++#include "util/trace/util_trace.h"
++
+ /* The entry function with which we start the Active Object thread*/
+ static void* active_entry(void* arg)
+ {
+@@ -21,6 +24,8 @@
+             break;
+         }
+ 
++        util_trace_ao_dispatch(active_object, ((Event*)event)->type);
++
+         (void)util_fsm_send_event(&active_object->active_fsm, event);
+     }
+ 
+@@ -58,9 +63,12 @@
+         return eSTATUS_NULL_PARAM;
+     }
+ 
++    util_trace_ao_post(active_object, event->type);
++
+     eStatus status = util_queue_push(&active_object->event_queue, event);
+     if(status == eSTATUS_ACTION_FAILED || status != eSTATUS_SUCCESSFUL)
+     {
++        util_trace_ao_post_cancel(active_object);
+         return eSTATUS_ACTION_FAILED;
+     }
+ 
