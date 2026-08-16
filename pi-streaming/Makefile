@@ -6,16 +6,17 @@
 #   make clean        - Remove built files
 
 CC      = gcc
-CFLAGS  = -Wall -Wextra -g -O2 -D_GNU_SOURCE -I. -I../src -Iacoustic -Iorin
+CFLAGS  = -Wall -Wextra -g -O2 -D_GNU_SOURCE -Isrc -Iorin -Iacoustic -I../src
 LDFLAGS = -L../bin/debug -lsnipeit -lwebsockets -lm -pthread -luring -lgpiod -lfftw3f -lasound -lzmq
 # Source files
-SRCS = main.c websocket_server.c process_manager.c config.c ddl_bridge.c \
+SRCS = src/main.c src/websocket_server.c src/process_manager.c src/config.c \
+       src/ddl_bridge.c \
        acoustic/acoustic_bridge.c acoustic/acoustic_config.c acoustic/ring_buffer.c \
        acoustic/onset_detector.c acoustic/gcc_phat.c acoustic/srp_phat.c \
        acoustic/alsa_capture.c \
        orin/pose_ring.c orin/detection_msg.c orin/aiming.c orin/orin_receiver.c \
        orin/sei_frame_id.c orin/frame_sender.c orin/tracker.c
-HDRS = websocket_server.h process_manager.h config.h ddl_bridge.h \
+HDRS = src/websocket_server.h src/process_manager.h src/config.h src/ddl_bridge.h \
        acoustic/acoustic_bridge.h acoustic/acoustic_config.h acoustic/ring_buffer.h \
        acoustic/onset_detector.h acoustic/gcc_phat.h acoustic/srp_phat.h \
        acoustic/alsa_capture.h \

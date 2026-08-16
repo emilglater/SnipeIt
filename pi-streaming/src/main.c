@@ -56,7 +56,7 @@
 #include "websocket_server.h"
 #include "process_manager.h"
 #include "acoustic_bridge.h"
-#include "orin/frame_sender.h"
+#include "frame_sender.h"
 
 #define DDL_BRIDGE_INTERVAL_MS 1000
 #define LWS_WAKER_INTERVAL_MS  20   /* kick the lws poll this often -> loop runs at ~50 Hz */

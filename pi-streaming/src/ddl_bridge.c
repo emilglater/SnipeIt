@@ -21,11 +21,11 @@
 #include "ddl/servo/servo_config.h"
 
 /* Orin detection -> lock-on pipeline */
-#include "orin/pose_ring.h"
-#include "orin/detection_msg.h"
-#include "orin/aiming.h"
-#include "orin/orin_receiver.h"
-#include "orin/tracker.h"
+#include "pose_ring.h"
+#include "detection_msg.h"
+#include "aiming.h"
+#include "orin_receiver.h"
+#include "tracker.h"
 
 /* PULL-bind endpoint for detections returning from the Orin. The Orin
  * PUSH-connects to this over the direct GigE link. Compile-time for now;
