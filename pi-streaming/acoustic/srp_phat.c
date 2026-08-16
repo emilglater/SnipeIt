@@ -85,14 +85,16 @@ void srp_phat_estimate(const gcc_phat_workspace_t *gcc_ws,
     float second_best_power = -1e30f;
     float best_azimuth = 0.0f;
 
-    for (float theta = AZIMUTH_MIN_DEG; theta <= AZIMUTH_MAX_DEG; theta += AZIMUTH_STEP_DEG) {
+    for (float theta = AZIMUTH_MIN_DEG; theta <= AZIMUTH_MAX_DEG; theta += AZIMUTH_STEP_DEG)
+    {
         float power = 0.0f;
 
         /*
          * For each microphone pair, compute the expected TDOA at this
          * azimuth, convert to samples, and look up the correlation value.
          */
-        for (int p = 0; p < gcc_ws->num_pairs; p++) {
+        for (int p = 0; p < gcc_ws->num_pairs; p++)
+        {
             int mic_i = gcc_ws->pair_indices[p][0];
             int mic_j = gcc_ws->pair_indices[p][1];
 
@@ -143,17 +145,21 @@ void srp_phat_estimate(const gcc_phat_workspace_t *gcc_ws,
         }
 
         /* Store power for this angle */
-        if (num_angles < 361) {
+        if (num_angles < 361)
+        {
             result->power_spectrum[num_angles] = power;
         }
         num_angles++;
 
         /* Track the best and second-best peaks */
-        if (power > best_power) {
+        if (power > best_power)
+        {
             second_best_power = best_power;
             best_power = power;
             best_azimuth = theta;
-        } else if (power > second_best_power) {
+        }
+        else if (power > second_best_power)
+        {
             second_best_power = power;
         }
     }
@@ -173,16 +179,22 @@ void srp_phat_estimate(const gcc_phat_workspace_t *gcc_ws,
      * If the spectrum is flat, all directions are equally likely → low confidence.
      */
     float total_power = 0.0f;
-    for (int i = 0; i < num_angles; i++) {
+    for (int i = 0; i < num_angles; i++)
+    {
         total_power += result->power_spectrum[i];
     }
     float mean_power = total_power / (float)num_angles;
 
-    if (best_power > 1e-6f && mean_power > 0.0f) {
+    if (best_power > 1e-6f && mean_power > 0.0f)
+    {
         result->confidence = 1.0f - (mean_power / best_power);
-    } else if (best_power > 1e-6f) {
+    }
+    else if (best_power > 1e-6f)
+    {
         result->confidence = 1.0f;
-    } else {
+    }
+    else
+    {
         result->confidence = 0.0f;
     }
 

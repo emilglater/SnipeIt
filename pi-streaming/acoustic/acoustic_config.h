@@ -126,7 +126,8 @@
 #define ARRAY_RADIUS_M      0.08f
 
 /* Microphone position structure */
-typedef struct {
+typedef struct
+{
     float x;  /* meters, positive = right */
     float y;  /* meters, positive = forward */
 } mic_position_t;
@@ -140,7 +141,8 @@ extern const mic_position_t MIC_POSITIONS[NUM_CHANNELS];
  * This is the output of the detection + localization pipeline, passed
  * to the WebSocket reporter for transmission to the Android app.
  * ------------------------------------------------------------------------ */
-typedef struct {
+typedef struct
+{
     uint64_t    timestamp_us;       /* Microseconds since epoch (CLOCK_MONOTONIC) */
     float       azimuth_deg;        /* Estimated bearing: -90 to +90 degrees */
     float       confidence;         /* 0.0 to 1.0, based on SRP-PHAT peak quality */

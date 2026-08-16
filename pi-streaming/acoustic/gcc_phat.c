@@ -53,7 +53,8 @@ static float parabolic_interpolation(const float *y, int idx, int len)
     float y_next = y[next];
 
     float denom = y_prev - 2.0f * y_curr + y_next;
-    if (fabsf(denom) < 1e-12f) {
+    if (fabsf(denom) < 1e-12f)
+    {
         return 0.0f;  /* Flat region, no interpolation possible */
     }
 
@@ -73,8 +74,10 @@ static float parabolic_interpolation(const float *y, int idx, int len)
 static void build_pair_indices(gcc_phat_workspace_t *ws)
 {
     int p = 0;
-    for (int i = 0; i < ws->num_channels; i++) {
-        for (int j = i + 1; j < ws->num_channels; j++) {
+    for (int i = 0; i < ws->num_channels; i++)
+    {
+        for (int j = i + 1; j < ws->num_channels; j++)
+        {
             ws->pair_indices[p][0] = i;
             ws->pair_indices[p][1] = j;
             p++;
@@ -86,7 +89,8 @@ static void build_pair_indices(gcc_phat_workspace_t *ws)
 gcc_phat_workspace_t *gcc_phat_create(int fft_size, int num_channels)
 {
     gcc_phat_workspace_t *ws = (gcc_phat_workspace_t *)calloc(1, sizeof(gcc_phat_workspace_t));
-    if (!ws) {
+    if (!ws)
+    {
         fprintf(stderr, "[gcc_phat] Failed to allocate workspace\n");
         return NULL;
     }
@@ -106,7 +110,8 @@ gcc_phat_workspace_t *gcc_phat_create(int fft_size, int num_channels)
     ws->correlation   = (float *)fftwf_malloc(sizeof(float) * fft_size);
 
     if (!ws->time_buf_a || !ws->time_buf_b || !ws->freq_buf_a ||
-        !ws->freq_buf_b || !ws->cross_spectrum || !ws->correlation) {
+        !ws->freq_buf_b || !ws->cross_spectrum || !ws->correlation)
+    {
         fprintf(stderr, "[gcc_phat] Failed to allocate FFTW buffers\n");
         gcc_phat_destroy(ws);
         return NULL;
@@ -117,7 +122,8 @@ gcc_phat_workspace_t *gcc_phat_create(int fft_size, int num_channels)
     ws->plan_fwd_b = fftwf_plan_dft_r2c_1d(fft_size, ws->time_buf_b, ws->freq_buf_b, FFTW_ESTIMATE);
     ws->plan_inv   = fftwf_plan_dft_c2r_1d(fft_size, ws->cross_spectrum, ws->correlation, FFTW_ESTIMATE);
 
-    if (!ws->plan_fwd_a || !ws->plan_fwd_b || !ws->plan_inv) {
+    if (!ws->plan_fwd_a || !ws->plan_fwd_b || !ws->plan_inv)
+    {
         fprintf(stderr, "[gcc_phat] Failed to create FFTW plans\n");
         gcc_phat_destroy(ws);
         return NULL;
@@ -129,7 +135,8 @@ gcc_phat_workspace_t *gcc_phat_create(int fft_size, int num_channels)
     ws->peak_values   = (float *)calloc(num_pairs, sizeof(float));
     ws->pair_indices  = (int (*)[2])calloc(num_pairs, sizeof(int[2]));
 
-    if (!ws->tdoa_results || !ws->peak_values || !ws->pair_indices) {
+    if (!ws->tdoa_results || !ws->peak_values || !ws->pair_indices)
+    {
         fprintf(stderr, "[gcc_phat] Failed to allocate pair arrays\n");
         gcc_phat_destroy(ws);
         return NULL;
@@ -204,7 +211,8 @@ void gcc_phat_compute_pair(gcc_phat_workspace_t *ws,
      * Sign convention: positive TDOA means signal arrives at mic B
      * LATER than mic A (i.e., mic A is closer to the source).
      */
-    for (int k = 0; k < freq_size; k++) {
+    for (int k = 0; k < freq_size; k++)
+    {
         float a_re = ws->freq_buf_a[k][0];
         float a_im = ws->freq_buf_a[k][1];
         float b_re = ws->freq_buf_b[k][0];
@@ -252,7 +260,8 @@ void gcc_phat_compute_pair(gcc_phat_workspace_t *ws,
     int max_delay_samples = (int)ceilf(max_delay_sec * (float)sample_rate) + 2;
 
     /* Clamp search range to buffer limits */
-    if (max_delay_samples > N / 2) {
+    if (max_delay_samples > N / 2)
+    {
         max_delay_samples = N / 2;
     }
 
@@ -260,18 +269,22 @@ void gcc_phat_compute_pair(gcc_phat_workspace_t *ws,
     int best_idx = 0;
 
     /* Search positive lags: indices 0..max_delay_samples */
-    for (int i = 0; i <= max_delay_samples; i++) {
+    for (int i = 0; i <= max_delay_samples; i++)
+    {
         float val = ws->correlation[i];
-        if (val > best_val) {
+        if (val > best_val)
+        {
             best_val = val;
             best_idx = i;
         }
     }
 
     /* Search negative lags: indices (N - max_delay_samples)..N-1 */
-    for (int i = N - max_delay_samples; i < N; i++) {
+    for (int i = N - max_delay_samples; i < N; i++)
+    {
         float val = ws->correlation[i];
-        if (val > best_val) {
+        if (val > best_val)
+        {
             best_val = val;
             best_idx = i;
         }
@@ -285,9 +298,12 @@ void gcc_phat_compute_pair(gcc_phat_workspace_t *ws,
 
     /* Convert index to signed delay (negative lags are at the end of the array) */
     float delay_samples;
-    if (best_idx <= N / 2) {
+    if (best_idx <= N / 2)
+    {
         delay_samples = (float)best_idx + fractional_offset;
-    } else {
+    }
+    else
+    {
         delay_samples = (float)(best_idx - N) + fractional_offset;
     }
 
@@ -317,19 +333,22 @@ void gcc_phat_compute_all_pairs(gcc_phat_workspace_t *ws,
     float *mono_a = (float *)malloc(sizeof(float) * num_frames);
     float *mono_b = (float *)malloc(sizeof(float) * num_frames);
 
-    if (!mono_a || !mono_b) {
+    if (!mono_a || !mono_b)
+    {
         fprintf(stderr, "[gcc_phat] Failed to allocate mono extraction buffers\n");
         free(mono_a);
         free(mono_b);
         return;
     }
 
-    for (int p = 0; p < ws->num_pairs; p++) {
+    for (int p = 0; p < ws->num_pairs; p++)
+    {
         int mic_i = ws->pair_indices[p][0];
         int mic_j = ws->pair_indices[p][1];
 
         /* De-interleave: extract channel mic_i and mic_j */
-        for (int f = 0; f < num_frames; f++) {
+        for (int f = 0; f < num_frames; f++)
+        {
             mono_a[f] = multichannel[f * ch + mic_i];
             mono_b[f] = multichannel[f * ch + mic_j];
         }
@@ -347,14 +366,17 @@ int gcc_phat_get_pair_index(const gcc_phat_workspace_t *ws, int mic_i, int mic_j
     if (!ws) return -1;
 
     /* Ensure i < j */
-    if (mic_i > mic_j) {
+    if (mic_i > mic_j)
+    {
         int tmp = mic_i;
         mic_i = mic_j;
         mic_j = tmp;
     }
 
-    for (int p = 0; p < ws->num_pairs; p++) {
-        if (ws->pair_indices[p][0] == mic_i && ws->pair_indices[p][1] == mic_j) {
+    for (int p = 0; p < ws->num_pairs; p++)
+    {
+        if (ws->pair_indices[p][0] == mic_i && ws->pair_indices[p][1] == mic_j)
+        {
             return p;
         }
     }

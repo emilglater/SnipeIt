@@ -54,7 +54,8 @@ onset_detector_t *onset_detector_create(int sample_rate, float cutoff_hz,
                                          float threshold, int refractory_ms)
 {
     onset_detector_t *det = (onset_detector_t *)calloc(1, sizeof(onset_detector_t));
-    if (!det) {
+    if (!det)
+    {
         fprintf(stderr, "[onset_detector] Failed to allocate detector\n");
         return NULL;
     }
@@ -121,7 +122,8 @@ int onset_detector_process(onset_detector_t *det, const float *samples, int num_
 
     int trigger_fired = 0;
 
-    for (int i = 0; i < num_samples; i++) {
+    for (int i = 0; i < num_samples; i++)
+    {
         /*
          * Step 1: Apply the high-pass biquad filter.
          *
@@ -162,14 +164,16 @@ int onset_detector_process(onset_detector_t *det, const float *samples, int num_
         det->total_samples++;
 
         float ratio = 0.0f;
-        if (det->long_energy > 1e-12f) {
+        if (det->long_energy > 1e-12f)
+        {
             ratio = det->short_energy / det->long_energy;
         }
 
         if (ratio > det->threshold &&
             det->samples_since_trigger >= det->refractory_samples &&
             det->total_samples >= det->warmup_samples &&
-            det->long_energy > det->min_energy_floor) {
+            det->long_energy > det->min_energy_floor)
+        {
             trigger_fired = 1;
             det->samples_since_trigger = 0;
             det->triggered = 1;

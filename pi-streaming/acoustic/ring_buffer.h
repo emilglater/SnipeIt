@@ -20,7 +20,8 @@
 #include <pthread.h>
 #include "acoustic_config.h"
 
-typedef struct {
+typedef struct
+{
     float       *data;              /* Flat array: [frame0_ch0, frame0_ch1, ..., frame1_ch0, ...] */
     int          capacity;          /* Total frames the buffer can hold */
     int          num_channels;      /* Channels per frame */

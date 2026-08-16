@@ -44,7 +44,8 @@ typedef void (*onset_callback_t)(uint64_t timestamp_us, void *user_data);
 /**
  * ALSA capture state.
  */
-typedef struct {
+typedef struct
+{
     /* ALSA handle (void* to avoid including alsa/asoundlib.h in header) */
     void               *pcm_handle;
 

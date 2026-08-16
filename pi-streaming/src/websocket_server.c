@@ -17,7 +17,7 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
 {
     SessionData *session = (SessionData *)user;
     WebSocketServer *ws = NULL;
-    
+
     // Get server reference from protocol user data
     if (wsi)
     {
@@ -27,13 +27,13 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
             ws = (WebSocketServer *)protocol->user;
         }
     }
-    
+
     switch (reason)
     {
         case LWS_CALLBACK_PROTOCOL_INIT:
             printf("[WS] Protocol initialized\n");
             break;
-            
+
         case LWS_CALLBACK_ESTABLISHED:
             printf("[WS] Client connected\n");
             if (ws)
@@ -86,7 +86,7 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 }
             }
             break;
-            
+
         case LWS_CALLBACK_CLOSED:
             printf("[WS] Client disconnected\n");
             if (ws && ws->client_wsi == wsi)
@@ -106,7 +106,7 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 }
             }
             break;
-            
+
         case LWS_CALLBACK_SERVER_WRITEABLE:
             if (ws && ws->queue_count > 0)
             {
@@ -144,7 +144,7 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 }
             }
             break;
-            
+
         case LWS_CALLBACK_RECEIVE:
             if (ws && ws->on_command && in && len > 0)
             {
@@ -154,11 +154,11 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 ws->on_command((const char *)in, len, ws->callback_user_data);
             }
             break;
-            
+
         default:
             break;
     }
-    
+
     return 0;
 }
 
@@ -200,23 +200,23 @@ int ws_init(WebSocketServer *ws, int port)
         fprintf(stderr, "[WS] Failed to allocate message queue\n");
         return -1;
     }
-    
+
     // Set protocol user data to point to our server struct
     protocols[0].user = ws;
-    
+
     // Configure libwebsockets
     struct lws_context_creation_info info;
     memset(&info, 0, sizeof(info));
-    
+
     info.port = port;
     info.protocols = protocols;
     info.gid = -1;
     info.uid = -1;
     info.options = LWS_SERVER_OPTION_VALIDATE_UTF8;
-    
+
     // Reduce logging verbosity
     lws_set_log_level(LLL_ERR | LLL_WARN, NULL);
-    
+
     // Create context
     ws->context = lws_create_context(&info);
     if (!ws->context)
@@ -224,10 +224,10 @@ int ws_init(WebSocketServer *ws, int port)
         fprintf(stderr, "[WS] Failed to create libwebsockets context\n");
         return -1;
     }
-    
+
     ws->running = true;
     printf("[WS] WebSocket server listening on port %d\n", port);
-    
+
     return 0;
 }
 
@@ -252,7 +252,7 @@ int ws_service(WebSocketServer *ws, int timeout_ms)
     {
         return -1;
     }
-    
+
     return lws_service(ws->context, timeout_ms);
 }
 

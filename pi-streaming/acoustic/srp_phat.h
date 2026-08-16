@@ -28,7 +28,8 @@
 /**
  * SRP-PHAT result structure.
  */
-typedef struct {
+typedef struct
+{
     float   azimuth_deg;        /* Best azimuth in degrees (-90 to +90) */
     float   confidence;         /* 0.0 to 1.0 */
     float   peak_power;         /* Raw SRP-PHAT power at best azimuth */

@@ -26,7 +26,8 @@
  * High-pass filter state for a 2nd-order IIR (biquad) filter.
  * Two past input samples and two past output samples.
  */
-typedef struct {
+typedef struct
+{
     float x1, x2;      /* Previous input samples */
     float y1, y2;      /* Previous output samples */
 } biquad_state_t;
@@ -34,7 +35,8 @@ typedef struct {
 /**
  * Main onset detector state.
  */
-typedef struct {
+typedef struct
+{
     /* High-pass filter */
     biquad_state_t  hp_filter;
     float           hp_b0, hp_b1, hp_b2;    /* Numerator coefficients */

@@ -1,0 +1,48 @@
+---
+# Style reference for pi-streaming. Matches what the code already does:
+# Allman braces, 4-space indent, no tabs, pointer bound to the name.
+#
+# IMPORTANT: do NOT run clang-format across the whole tree.
+#
+# This code aligns SELECTIVELY -- struct members and #define blocks are aligned
+# into a comment gutter, function bodies are not -- and clang-format has no
+# "align sometimes" mode. Whichever way the AlignConsecutive* options are set,
+# a full sweep rewrites ~30% of every file: with them on it pads declarations
+# that were deliberately left unaligned, with them off it collapses the gutters.
+# It also re-packs argument lists that were grouped by hand for meaning.
+# Measured 2026-08-16 across six config variants; ~3,400 lines either way.
+#
+# Use it on NEW or CHANGED code only:
+#   clang-format --lines=<start>:<end> -i <file>
+#
+Language: Cpp
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+BreakBeforeBraces: Allman
+PointerAlignment: Right
+ColumnLimit: 100
+IndentCaseLabels: true
+
+# Never collapse a body onto one line.
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+
+# Reordering #includes in C can break builds; leave the order alone.
+SortIncludes: false
+
+# The codebase aligns declarations, macros and trailing comments in blocks.
+AlignConsecutiveMacros: AcrossEmptyLinesAndComments
+AlignConsecutiveDeclarations: AcrossComments
+AlignConsecutiveAssignments: AcrossComments
+AlignTrailingComments: true
+AlignAfterOpenBracket: Align
+
+SpaceBeforeParens: ControlStatements
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false

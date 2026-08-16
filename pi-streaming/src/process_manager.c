@@ -28,43 +28,43 @@ int pm_start_mediamtx(ProcessManager *pm, const StreamingConfig *config)
         printf("[PM] mediaMTX is already running (PID: %d)\n", pm->mediamtx_pid);
         return 0;
     }
-    
+
     printf("[PM] Starting mediaMTX...\n");
-    
+
     pid_t pid = fork();
-    
+
     if (pid < 0)
     {
         perror("[PM] fork failed for mediaMTX");
         return -1;
     }
-    
+
     if (pid == 0)
     {
         // Child process - exec mediaMTX
-        
+
         // Redirect stdout/stderr to /dev/null or log file
         // (mediaMTX is quite verbose)
         freopen("/tmp/mediamtx.log", "w", stdout);
         freopen("/tmp/mediamtx.log", "a", stderr);
-        
+
         // Execute mediaMTX
-        execl(config->mediamtx_path, 
+        execl(config->mediamtx_path,
               config->mediamtx_path,
               config->mediamtx_config,
               (char *)NULL);
-        
+
         // If exec fails
         perror("[PM] execl mediaMTX failed");
         _exit(127);
     }
-    
+
     // Parent process
     pm->mediamtx_pid = pid;
     pm->mediamtx_running = true;
-    
+
     printf("[PM] mediaMTX started (PID: %d)\n", pm->mediamtx_pid);
-    
+
     return 0;
 }
 
@@ -74,9 +74,9 @@ void pm_stop_mediamtx(ProcessManager *pm)
     {
         return;
     }
-    
+
     printf("[PM] Stopping mediaMTX (PID: %d)...\n", pm->mediamtx_pid);
-    
+
     // Send SIGTERM first (graceful shutdown).  SIGCHLD is SIG_IGN (see main.c),
     // so children are auto-reaped and waitpid() would return ECHILD here — poll
     // liveness with kill(pid, 0) instead (0 = alive, ESRCH = gone).
@@ -122,30 +122,30 @@ int pm_start_ffmpeg(ProcessManager *pm, const StreamingConfig *config)
         printf("[PM] FFmpeg is already running (PID: %d)\n", pm->ffmpeg_pid);
         return 0;
     }
-    
+
     printf("[PM] Starting FFmpeg stream...\n");
-    
+
     pid_t pid = fork();
-    
+
     if (pid < 0)
     {
         perror("[PM] fork failed for FFmpeg");
         return -1;
     }
-    
+
     if (pid == 0)
     {
         // Child process - exec FFmpeg
-        
+
         // Redirect stdout/stderr to log file
         freopen("/tmp/ffmpeg.log", "w", stdout);
         freopen("/tmp/ffmpeg.log", "a", stderr);
-        
+
         // Build RTSP URL
         char rtsp_url[256];
         snprintf(rtsp_url, sizeof(rtsp_url), "rtsp://localhost:%d/%s",
                  config->rtsp_port, config->rtsp_stream_name);
-        
+
         // Choose FFmpeg command based on input source type.
         if (config_is_fifo(config->video_path))
         {
@@ -229,19 +229,19 @@ int pm_start_ffmpeg(ProcessManager *pm, const StreamingConfig *config)
                   rtsp_url,                     // Output URL
                   (char *)NULL);
         }
-        
+
         // If exec fails
         perror("[PM] execl ffmpeg failed");
         _exit(127);
     }
-    
+
     // Parent process
     pm->ffmpeg_pid = pid;
     pm->ffmpeg_running = true;
-    
-    printf("[PM] FFmpeg started (PID: %d), streaming to RTSP port %d\n", 
+
+    printf("[PM] FFmpeg started (PID: %d), streaming to RTSP port %d\n",
            pm->ffmpeg_pid, config->rtsp_port);
-    
+
     return 0;
 }
 
@@ -251,9 +251,9 @@ void pm_stop_ffmpeg(ProcessManager *pm)
     {
         return;
     }
-    
+
     printf("[PM] Stopping FFmpeg (PID: %d)...\n", pm->ffmpeg_pid);
-    
+
     // Send SIGTERM first.  SIGCHLD is SIG_IGN (see main.c), so children are
     // auto-reaped and waitpid() would return ECHILD here — poll liveness with
     // kill(pid, 0) instead (0 = alive, ESRCH = gone).
@@ -325,14 +325,14 @@ void pm_cleanup(ProcessManager *pm)
 int pm_wait_for_mediamtx_ready(const StreamingConfig *config, int timeout_sec)
 {
     printf("[PM] Waiting for mediaMTX to be ready on port %d...\n", config->rtsp_port);
-    
+
     int sock;
     struct sockaddr_in addr;
-    
+
     addr.sin_family = AF_INET;
     addr.sin_port = htons(config->rtsp_port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-    
+
     for (int i = 0; i < timeout_sec * 10; i++)
     {
         sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -341,19 +341,19 @@ int pm_wait_for_mediamtx_ready(const StreamingConfig *config, int timeout_sec)
             usleep(100000); // 100ms
             continue;
         }
-        
+
         int result = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
         close(sock);
-        
+
         if (result == 0)
         {
             printf("[PM] mediaMTX is ready\n");
             return 0;
         }
-        
+
         usleep(100000); // 100ms
     }
-    
+
     fprintf(stderr, "[PM] Timeout waiting for mediaMTX\n");
     return -1;
 }

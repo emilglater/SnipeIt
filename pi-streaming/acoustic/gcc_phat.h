@@ -30,7 +30,8 @@
  * Creating FFTW plans is expensive, so we do it once at initialization
  * and reuse the plans and scratch buffers for every computation.
  */
-typedef struct {
+typedef struct
+{
     int             fft_size;
     int             num_channels;
 
