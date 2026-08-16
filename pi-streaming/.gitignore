@@ -3,7 +3,6 @@ mediamtx
 mediamtx_*.tar.gz
 
 # Compiled binaries
-test_ipc
 streaming_server
 orin_live_loop
 orin_rtp_stream

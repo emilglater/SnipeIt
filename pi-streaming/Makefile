@@ -2,7 +2,6 @@
 #
 # Usage:
 #   make              - Build main streaming server
-#   make test_ipc     - Build IPC test only
 #   make all          - Build everything
 #   make clean        - Remove built files
 
@@ -10,26 +9,24 @@ CC      = gcc
 CFLAGS  = -Wall -Wextra -g -O2 -D_GNU_SOURCE -I. -I../src -Iacoustic
 LDFLAGS = -L../bin/debug -lsnipeit -lwebsockets -lm -pthread -luring -lgpiod -lfftw3f -lasound -lzmq
 # Source files
-SRCS = main.c unix_socket.c websocket_server.c process_manager.c config.c ddl_bridge.c \
+SRCS = main.c websocket_server.c process_manager.c config.c ddl_bridge.c \
        acoustic/acoustic_bridge.c acoustic/acoustic_config.c acoustic/ring_buffer.c \
        acoustic/onset_detector.c acoustic/gcc_phat.c acoustic/srp_phat.c \
        acoustic/alsa_capture.c \
        orin/pose_ring.c orin/detection_msg.c orin/aiming.c orin/orin_receiver.c \
        orin/sei_frame_id.c orin/frame_sender.c orin/tracker.c
-HDRS = unix_socket.h websocket_server.h process_manager.h config.h ddl_bridge.h \
+HDRS = websocket_server.h process_manager.h config.h ddl_bridge.h \
        acoustic/acoustic_bridge.h acoustic/acoustic_config.h acoustic/ring_buffer.h \
        acoustic/onset_detector.h acoustic/gcc_phat.h acoustic/srp_phat.h \
        acoustic/alsa_capture.h \
        orin/pose_ring.h orin/detection_msg.h orin/aiming.h orin/orin_receiver.h \
        orin/sei_frame_id.h orin/frame_sender.h orin/tracker.h
-IPC_SRCS = unix_socket.c
-IPC_HDRS = unix_socket.h
 
 SNIPEIT_LIB = ../bin/debug/libsnipeit.a
 
 .PHONY: all clean help
 
-all: streaming_server test_ipc
+all: streaming_server
 
 # Standalone unit test for the Pi<->Orin frame_id -> pose ring buffer.
 # Self-contained: only needs pose_ring.c + pthread, no libsnipeit.
@@ -134,28 +131,17 @@ streaming_server: $(SRCS) $(HDRS) $(SNIPEIT_LIB)
 	@echo "========================================"
 	@echo ""
 	@echo "Before running, make sure to:"
-	@echo "  1. Edit streaming_config.json with your video path"
-	@echo "  2. Start the Python detection script"
+	@echo "  1. Check orin_host / orin_rtp_port in streaming_config.json"
+	@echo "  2. Start the detector on the Orin (it replies over ZeroMQ)"
 	@echo ""
 	@echo "To run:"
-	@echo "  ./streaming_server [config_file]"
+	@echo "  ./start.sh [config_file]     (creates the camera FIFO, then runs the server)"
 	@echo ""
-
-# IPC test program
-test_ipc: test_ipc.c $(IPC_SRCS) $(IPC_HDRS)
-	$(CC) $(CFLAGS) -o $@ test_ipc.c $(IPC_SRCS)
-	@echo ""
-	@echo "Build complete: test_ipc"
-	@echo ""
-	@echo "To test IPC:"
-	@echo "  Terminal 1: ./test_ipc"
-	@echo "  Terminal 2: python3 test_ipc.py"
 
 # Clean build artifacts
 clean:
-	rm -f streaming_server test_ipc test_pose_ring test_detection_msg test_aiming test_sei_frame_id test_tracker test_orin_receiver orin_sender_demo orin_sei_capture orin_rtp_stream orin_live_loop
+	rm -f streaming_server test_pose_ring test_detection_msg test_aiming test_sei_frame_id test_tracker test_orin_receiver orin_sender_demo orin_sei_capture orin_rtp_stream orin_live_loop
 	rm -f *.o orin/*.o
-	rm -f /tmp/detection.sock
 	rm -f /tmp/mediamtx.log /tmp/ffmpeg.log
 	@echo "Clean complete"
 
@@ -166,13 +152,13 @@ help:
 	@echo "Targets:"
 	@echo "  all              - Build all targets (default)"
 	@echo "  streaming_server - Build main streaming server"
-	@echo "  test_ipc         - Build IPC test program"
+	@echo "  test_orin        - Build and run the Orin-module unit tests"
 	@echo "  clean            - Remove built files"
 	@echo "  help             - Show this help"
 	@echo ""
 	@echo "Quick start:"
 	@echo "  1. make"
-	@echo "  2. Edit streaming_config.json"
-	@echo "  3. Terminal 1: ./streaming_server"
-	@echo "  4. Terminal 2: python3 test_ipc.py"
+	@echo "  2. Edit streaming_config.json (orin_host, orin_rtp_port)"
+	@echo "  3. Start the detector on the Orin"
+	@echo "  4. ./start.sh"
 	@echo "  5. Connect Android app"
