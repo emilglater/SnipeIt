@@ -29,14 +29,14 @@ DdlBridge* ddl_bridge_start(WebSocketServer* ws, unsigned int period_ms);
  *          the last emission, reads the snapshot, serialises it to JSON, and
  *          queues the message on the WS server. Otherwise returns quickly.
  */
-void ddl_bridge_tick(DdlBridge* bridge);
+void ddl_bridge_tick(DdlBridge* b);
 
 /**
  * @brief Stop the sensor pipeline and free the bridge.
  */
-void ddl_bridge_stop(DdlBridge* bridge);
+void ddl_bridge_stop(DdlBridge* b);
 
-void ddl_bridge_handle_command(DdlBridge* bridge, const char* json, size_t len);
+void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len);
 
 /**
  * @brief Forward any queued Orin detections to the app. Call from the main loop.
@@ -47,7 +47,7 @@ void ddl_bridge_handle_command(DdlBridge* bridge, const char* json, size_t len);
  *          the exact "target_detection" schema the app already expects. Cheap
  *          when the queue is empty.
  */
-void ddl_bridge_pump_detections(DdlBridge* bridge);
+void ddl_bridge_pump_detections(DdlBridge* b);
 
 /**
  * @brief Record the capture-time servo pose for an outgoing frame_id.
@@ -58,6 +58,6 @@ void ddl_bridge_pump_detections(DdlBridge* bridge);
  *          be joined back to the pose the camera held when the frame was
  *          taken. No-op if the receiver pipeline didn't start. Thread-safe.
  */
-void ddl_bridge_record_capture_pose(DdlBridge* bridge, uint32_t frame_id);
+void ddl_bridge_record_capture_pose(DdlBridge* b, uint32_t frame_id);
 
 #endif

@@ -177,6 +177,54 @@ $(BIN_DIR)/orin_live_loop: demo/live_loop_demo.c orin/frame_sender.c orin/sei_fr
 	      $(GST_LIBS) $(ZMQ_LIBS) -lm -pthread
 	@echo "Build complete: $@  (run: $@ [orin_host] [rtp_port] [zmq_bind] [seconds] [camera|test])"
 
+# --- Static analysis --------------------------------------------------------
+# Mirrors the root Makefile's cppcheck setup with two deliberate differences:
+#
+#  1. No MISRA addon. MISRA C:2012 over GStreamer/libwebsockets/pthread code
+#     produces hundreds of findings that can only be suppressed, not fixed.
+#     The value here is --enable=all catching real defects.
+#  2. No --safety / --check-level=exhaustive / --report-type. Those need
+#     cppcheck >= 2.11; Debian bookworm ships 2.10. (The root `make lint`
+#     currently fails on this machine for exactly that reason.)
+#
+# The threadsafety addon is kept: this code is multi-threaded, so it earns its
+# place. It flags every function-local static, so genuinely single-threaded
+# ones carry an inline suppression stating which thread owns them.
+
+CPPCHECK_DIR   = $(BUILD_DIR)/cppcheck
+CPPCHECK_FLAGS  = --enable=all
+CPPCHECK_FLAGS += --inconclusive
+CPPCHECK_FLAGS += --error-exitcode=1
+CPPCHECK_FLAGS += --inline-suppr
+CPPCHECK_FLAGS += --suppress=missingIncludeSystem
+CPPCHECK_FLAGS += --suppress=unmatchedSuppression
+# usleep is formally obsolescent in POSIX.2008 but universally available on
+# Linux, and the sleeps here are coarse (100 ms) supervision waits.
+CPPCHECK_FLAGS += --suppress=usleepCalled
+# Module APIs are checked one directory at a time, so an entry point used only
+# by the streaming server (or not yet used) looks unused. Not a useful signal.
+CPPCHECK_FLAGS += --suppress=unusedFunction
+CPPCHECK_FLAGS += --language=c
+CPPCHECK_FLAGS += --std=c11
+CPPCHECK_FLAGS += --library=posix.cfg
+CPPCHECK_FLAGS += --platform=../script/type_sizes.xml
+CPPCHECK_FLAGS += --relative-paths=.
+CPPCHECK_FLAGS += --addon=../script/threadsafety.json
+CPPCHECK_FLAGS += -Isrc -Iorin -Iacoustic -I../src
+CPPCHECK_FLAGS += --cppcheck-build-dir=$(CPPCHECK_DIR)
+CPPCHECK_FLAGS += -j1
+
+# legacy/ is deliberately excluded: it is retired code kept for reference.
+LINT_DIRS = src orin acoustic test demo
+
+.PHONY: lint
+lint: | $(CPPCHECK_DIR)
+	cppcheck $(CPPCHECK_FLAGS) $(LINT_DIRS)
+	@echo "Lint clean"
+
+$(CPPCHECK_DIR):
+	mkdir -p $@
+
 # --- Housekeeping -----------------------------------------------------------
 
 clean:

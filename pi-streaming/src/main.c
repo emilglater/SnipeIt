@@ -533,6 +533,8 @@ int main(int argc, char *argv[])
         /* ITER-DIAG: stays SILENT on a healthy run.  With the waker, every
          * iteration is ~20 ms, so we only log if one takes longer than 200 ms,
          * i.e. a real stall.  No [ITER-DIAG] output == the fix is working. */
+        /* Main loop only; no synchronisation needed. */
+        /* cppcheck-suppress threadsafety-threadsafety */
         static struct timespec prev_iter = {0, 0};
         struct timespec now_iter;
         clock_gettime(CLOCK_MONOTONIC, &now_iter);

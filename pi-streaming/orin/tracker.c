@@ -128,9 +128,12 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
     const int      nd  = (msg->num_detections < ORIN_MAX_DETECTIONS)
                             ? msg->num_detections : ORIN_MAX_DETECTIONS;
 
-    float dp[ORIN_MAX_DETECTIONS];   /* detection bearings + width */
-    float dt[ORIN_MAX_DETECTIONS];
-    float dw[ORIN_MAX_DETECTIONS];
+    /* Only entries [0, nd) are written by the loop below, and only those are
+     * ever read. Zeroed anyway so static analysis can see every read is
+     * initialised without having to prove the bi < nd relationship. */
+    float dp[ORIN_MAX_DETECTIONS] = {0};   /* detection bearings + width */
+    float dt[ORIN_MAX_DETECTIONS] = {0};
+    float dw[ORIN_MAX_DETECTIONS] = {0};
     bool  det_taken[ORIN_MAX_DETECTIONS];
     bool  trk_matched[TRACKER_MAX_TRACKS];
 
@@ -171,7 +174,9 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
                 }
             }
         }
-        if (bi < 0) break;
+        /* bi and bk are only ever assigned together, so either both are set or
+         * neither is. Testing both states that invariant explicitly. */
+        if (bi < 0 || bk < 0) break;
 
         Track *tr = &t->tracks[bk];
         tr->pan  += BEARING_ALPHA * (dp[bi] - tr->pan);

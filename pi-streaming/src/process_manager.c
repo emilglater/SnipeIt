@@ -43,10 +43,11 @@ int pm_start_mediamtx(ProcessManager *pm, const StreamingConfig *config)
     {
         // Child process - exec mediaMTX
 
-        // Redirect stdout/stderr to /dev/null or log file
-        // (mediaMTX is quite verbose)
-        freopen("/tmp/mediamtx.log", "w", stdout);
-        freopen("/tmp/mediamtx.log", "a", stderr);
+        // Redirect stdout/stderr to a log file (mediaMTX is quite verbose).
+        // Return value deliberately ignored: this is the forked child on its
+        // way to execl, and there is nowhere useful left to report a failure.
+        (void)freopen("/tmp/mediamtx.log", "w", stdout);
+        (void)freopen("/tmp/mediamtx.log", "a", stderr);
 
         // Execute mediaMTX
         execl(config->mediamtx_path,
@@ -137,9 +138,10 @@ int pm_start_ffmpeg(ProcessManager *pm, const StreamingConfig *config)
     {
         // Child process - exec FFmpeg
 
-        // Redirect stdout/stderr to log file
-        freopen("/tmp/ffmpeg.log", "w", stdout);
-        freopen("/tmp/ffmpeg.log", "a", stderr);
+        // Redirect stdout/stderr to a log file. Return value deliberately
+        // ignored: forked child on its way to execl, nowhere to report to.
+        (void)freopen("/tmp/ffmpeg.log", "w", stdout);
+        (void)freopen("/tmp/ffmpeg.log", "a", stderr);
 
         // Build RTSP URL
         char rtsp_url[256];
@@ -326,7 +328,6 @@ int pm_wait_for_mediamtx_ready(const StreamingConfig *config, int timeout_sec)
 {
     printf("[PM] Waiting for mediaMTX to be ready on port %d...\n", config->rtsp_port);
 
-    int sock;
     struct sockaddr_in addr;
 
     addr.sin_family = AF_INET;
@@ -335,7 +336,7 @@ int pm_wait_for_mediamtx_ready(const StreamingConfig *config, int timeout_sec)
 
     for (int i = 0; i < timeout_sec * 10; i++)
     {
-        sock = socket(AF_INET, SOCK_STREAM, 0);
+        int sock = socket(AF_INET, SOCK_STREAM, 0);
         if (sock < 0)
         {
             usleep(100000); // 100ms
