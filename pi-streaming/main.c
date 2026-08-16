@@ -357,7 +357,7 @@ static void print_usage(const char *program)
     printf("\n");
     printf("Arguments:\n");
     printf("  config_file   Path to JSON configuration file\n");
-    printf("                (default: ./streaming_config.json)\n");
+    printf("                (default: ./config/streaming_config.json)\n");
     printf("\n");
     printf("Example:\n");
     printf("  %s\n", program);

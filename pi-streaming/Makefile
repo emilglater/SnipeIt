@@ -129,11 +129,11 @@ streaming_server: $(SRCS) $(HDRS) $(SNIPEIT_LIB)
 	@echo "========================================"
 	@echo ""
 	@echo "Before running, make sure to:"
-	@echo "  1. Check orin_host / orin_rtp_port in streaming_config.json"
+	@echo "  1. Check orin_host / orin_rtp_port in config/streaming_config.json"
 	@echo "  2. Start the detector on the Orin (it replies over ZeroMQ)"
 	@echo ""
 	@echo "To run:"
-	@echo "  ./start.sh [config_file]     (creates the camera FIFO, then runs the server)"
+	@echo "  ./script/start.sh [config_file]   (creates the camera FIFO, then runs the server)"
 	@echo ""
 
 # Clean build artifacts
@@ -156,7 +156,7 @@ help:
 	@echo ""
 	@echo "Quick start:"
 	@echo "  1. make"
-	@echo "  2. Edit streaming_config.json (orin_host, orin_rtp_port)"
+	@echo "  2. Edit config/streaming_config.json (orin_host, orin_rtp_port)"
 	@echo "  3. Start the detector on the Orin"
-	@echo "  4. ./start.sh"
+	@echo "  4. ./script/start.sh"
 	@echo "  5. Connect Android app"

@@ -12,7 +12,7 @@
 #include <stdbool.h>
 
 // Default configuration file path
-#define DEFAULT_CONFIG_PATH "./streaming_config.json"
+#define DEFAULT_CONFIG_PATH "./config/streaming_config.json"
 
 // Maximum path length
 #define MAX_PATH_LENGTH 512

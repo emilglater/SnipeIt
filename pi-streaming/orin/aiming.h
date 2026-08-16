@@ -22,7 +22,7 @@
  *      what person_streamer.py already does when it rescales lores->main.
  *   2. (hfov_deg, vfov_deg) must be the FOV of THAT frame — i.e. the effective
  *      FOV after the sensor crop the 1080p path uses. Confirm with
- *      orin/probe_camera_fov.py on the live camera; the defaults below are
+ *      script/probe_camera_fov.py on the live camera; the defaults below are
  *      provisional (see aiming.c).
  */
 

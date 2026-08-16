@@ -107,7 +107,7 @@ void config_init_defaults(StreamingConfig *config)
     *config = (StreamingConfig){
         .video_path = "",
         .mediamtx_path = "./mediamtx",
-        .mediamtx_config = "./mediamtx.yml",
+        .mediamtx_config = "./config/mediamtx.yml",
         .websocket_port = 8555,
         .rtsp_port = 8554,
         .rtsp_stream_name = "stream",

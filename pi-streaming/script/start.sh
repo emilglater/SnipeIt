@@ -7,10 +7,10 @@
 # Detections come back from the Orin over ZeroMQ. There is no local Python /
 # EdgeTPU detector any more (retired to legacy/edgetpu + branch edgetpu-fallback).
 #
-# Run with: ./start.sh [config_file]     (Ctrl+C to stop everything cleanly)
+# Run with: ./script/start.sh [config_file]   (Ctrl+C to stop everything cleanly)
 
 set -e
-cd "$(dirname "$0")"   # always run from pi-streaming/
+cd "$(dirname "$0")/.."   # always run from pi-streaming/, not script/
 
 # ---- 0. Clean up leftovers from a previous run --------------------------------
 echo "[start] Cleaning up previous processes..."
