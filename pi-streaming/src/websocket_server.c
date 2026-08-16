@@ -38,29 +38,29 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
             printf("[WS] Client connected\n");
             if (ws)
             {
-                // Single-client app.  If a client is still registered when a new
-                // one arrives, it is almost always a stale half-open socket from
-                // the same Android app reconnecting before libwebsockets has
-                // detected the old TCP close.  Rejecting the new connection here
-                // was the cause of intermittent black screens: on_connect never
-                // fired, so FFmpeg was never (re)started.  Instead, evict the old
-                // client and let the new one take over.
+                /* Single-client app.  If a client is still registered when a new
+                 * one arrives, it is almost always a stale half-open socket from
+                 * the same Android app reconnecting before libwebsockets has
+                 * detected the old TCP close.  Rejecting the new connection here
+                 * was the cause of intermittent black screens: on_connect never
+                 * fired, so FFmpeg was never (re)started.  Instead, evict the old
+                 * client and let the new one take over. */
                 if (ws->client_connected && ws->client_wsi && ws->client_wsi != wsi)
                 {
                     struct lws *old_wsi = ws->client_wsi;
                     printf("[WS] Existing client present - evicting it for the new connection\n");
 
-                    // Detach the old client from server state *before* tearing
-                    // down, so the old socket's eventual CLOSED callback is a
-                    // no-op (it's guarded by client_wsi == wsi).
+                    /* Detach the old client from server state *before* tearing
+                     * down, so the old socket's eventual CLOSED callback is a
+                     * no-op (it's guarded by client_wsi == wsi). */
                     ws->client_wsi = NULL;
                     ws->client_connected = false;
                     ws->queue_head = 0;
                     ws->queue_tail = 0;
                     ws->queue_count = 0;
 
-                    // Tear down the old streaming session (stop FFmpeg, STOP to
-                    // Python) so the new connection starts a clean stream.
+                    /* Tear down the old streaming session (stop FFmpeg, STOP to
+                     * Python) so the new connection starts a clean stream. */
                     if (ws->on_disconnect)
                     {
                         ws->on_disconnect(ws->callback_user_data);
@@ -148,9 +148,9 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
         case LWS_CALLBACK_RECEIVE:
             if (ws && ws->on_command && in && len > 0)
             {
-                // Command frames are small (<256B) and fit in a single WS
-                // frame. If you ever send larger payloads you'd reassemble
-                // here with lws_is_final_fragment() before dispatching.
+                /* Command frames are small (<256B) and fit in a single WS
+                 * frame. If you ever send larger payloads you'd reassemble
+                 * here with lws_is_final_fragment() before dispatching. */
                 ws->on_command((const char *)in, len, ws->callback_user_data);
             }
             break;
@@ -310,10 +310,10 @@ int ws_send_json(WebSocketServer *ws, const char *json, size_t len)
 
 int ws_get_poll_fd(WebSocketServer *ws)
 {
-    // libwebsockets manages its own event loop internally
-    // For integration with external poll(), we'd need to use
-    // the external poll API, which is more complex.
-    // For now, return -1 to indicate we use lws_service() instead.
+    /* libwebsockets manages its own event loop internally
+     * For integration with external poll(), we'd need to use
+     * the external poll API, which is more complex.
+     * For now, return -1 to indicate we use lws_service() instead. */
     (void)ws;
     return -1;
 }

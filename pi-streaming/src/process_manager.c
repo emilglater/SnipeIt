@@ -43,9 +43,9 @@ int pm_start_mediamtx(ProcessManager *pm, const StreamingConfig *config)
     {
         // Child process - exec mediaMTX
 
-        // Redirect stdout/stderr to a log file (mediaMTX is quite verbose).
-        // Return value deliberately ignored: this is the forked child on its
-        // way to execl, and there is nowhere useful left to report a failure.
+        /* Redirect stdout/stderr to a log file (mediaMTX is quite verbose).
+         * Return value deliberately ignored: this is the forked child on its
+         * way to execl, and there is nowhere useful left to report a failure. */
         (void)freopen("/tmp/mediamtx.log", "w", stdout);
         (void)freopen("/tmp/mediamtx.log", "a", stderr);
 
@@ -78,9 +78,9 @@ void pm_stop_mediamtx(ProcessManager *pm)
 
     printf("[PM] Stopping mediaMTX (PID: %d)...\n", pm->mediamtx_pid);
 
-    // Send SIGTERM first (graceful shutdown).  SIGCHLD is SIG_IGN (see main.c),
-    // so children are auto-reaped and waitpid() would return ECHILD here — poll
-    // liveness with kill(pid, 0) instead (0 = alive, ESRCH = gone).
+    /* Send SIGTERM first (graceful shutdown).  SIGCHLD is SIG_IGN (see main.c),
+     * so children are auto-reaped and waitpid() would return ECHILD here — poll
+     * liveness with kill(pid, 0) instead (0 = alive, ESRCH = gone). */
     if (kill(pm->mediamtx_pid, SIGTERM) == 0)
     {
         // Wait up to 3 seconds for graceful exit
@@ -138,8 +138,8 @@ int pm_start_ffmpeg(ProcessManager *pm, const StreamingConfig *config)
     {
         // Child process - exec FFmpeg
 
-        // Redirect stdout/stderr to a log file. Return value deliberately
-        // ignored: forked child on its way to execl, nowhere to report to.
+        /* Redirect stdout/stderr to a log file. Return value deliberately
+         * ignored: forked child on its way to execl, nowhere to report to. */
         (void)freopen("/tmp/ffmpeg.log", "w", stdout);
         (void)freopen("/tmp/ffmpeg.log", "a", stderr);
 
@@ -151,23 +151,23 @@ int pm_start_ffmpeg(ProcessManager *pm, const StreamingConfig *config)
         // Choose FFmpeg command based on input source type.
         if (config_is_fifo(config->video_path))
         {
-            // Live camera: picamera2 hardware encoder writes raw H.264 Annex-B to the
-            // FIFO at real-time rate.  FFmpeg just remuxes into RTSP — no re-encode,
-            // so CPU usage is minimal and latency is as low as possible.
-            // repeat=true in picamera2 ensures SPS/PPS precedes every IDR frame,
-            // so late-joining Android clients never see a green screen.
-            //
-            // -fflags +nobuffer keeps output latency low (no read-ahead before
-            // forwarding frames).  probesize/analyzeduration are NOT set tiny:
-            // raw H.264 carries no container header, so FFmpeg must read until it
-            // sees an SPS to learn the frame size.  With -probesize 32 /
-            // -analyzeduration 0 it frequently gave up first ("Could not find
-            // codec parameters ... unspecified size" → "Output file #0 does not
-            // contain any stream") and exited, which on reconnect cascaded into a
-            // dead stream.  These are upper bounds (FFmpeg stops as soon as it has
-            // the info), so they add no steady-state latency; 1 MB / 1 s is ample
-            // to capture the first SPS+IDR (SPS/PPS repeat before every IDR).
-            // Build the video framerate string from config
+            /* Live camera: picamera2 hardware encoder writes raw H.264 Annex-B to the
+             * FIFO at real-time rate.  FFmpeg just remuxes into RTSP — no re-encode,
+             * so CPU usage is minimal and latency is as low as possible.
+             * repeat=true in picamera2 ensures SPS/PPS precedes every IDR frame,
+             * so late-joining Android clients never see a green screen.
+             *
+             * -fflags +nobuffer keeps output latency low (no read-ahead before
+             * forwarding frames).  probesize/analyzeduration are NOT set tiny:
+             * raw H.264 carries no container header, so FFmpeg must read until it
+             * sees an SPS to learn the frame size.  With -probesize 32 /
+             * -analyzeduration 0 it frequently gave up first ("Could not find
+             * codec parameters ... unspecified size" → "Output file #0 does not
+             * contain any stream") and exited, which on reconnect cascaded into a
+             * dead stream.  These are upper bounds (FFmpeg stops as soon as it has
+             * the info), so they add no steady-state latency; 1 MB / 1 s is ample
+             * to capture the first SPS+IDR (SPS/PPS repeat before every IDR).
+             * Build the video framerate string from config */
             char fps_str[16];
             snprintf(fps_str, sizeof(fps_str), "%.0f", config->video_fps > 0 ? config->video_fps : 30.0);
 
@@ -256,9 +256,9 @@ void pm_stop_ffmpeg(ProcessManager *pm)
 
     printf("[PM] Stopping FFmpeg (PID: %d)...\n", pm->ffmpeg_pid);
 
-    // Send SIGTERM first.  SIGCHLD is SIG_IGN (see main.c), so children are
-    // auto-reaped and waitpid() would return ECHILD here — poll liveness with
-    // kill(pid, 0) instead (0 = alive, ESRCH = gone).
+    /* Send SIGTERM first.  SIGCHLD is SIG_IGN (see main.c), so children are
+     * auto-reaped and waitpid() would return ECHILD here — poll liveness with
+     * kill(pid, 0) instead (0 = alive, ESRCH = gone). */
     if (kill(pm->ffmpeg_pid, SIGTERM) == 0)
     {
         // Wait up to 2 seconds
@@ -295,10 +295,10 @@ bool pm_is_ffmpeg_running(ProcessManager *pm)
 
 void pm_check_processes(ProcessManager *pm)
 {
-    // SIGCHLD is SIG_IGN (see main.c), so children are auto-reaped and waitpid()
-    // can't be used to detect a self-exit (it returns ECHILD).  Probe liveness
-    // with kill(pid, 0): 0 means alive, ESRCH means the process is gone.  This
-    // means we can't recover the exit code/signal, only the fact of exit.
+    /* SIGCHLD is SIG_IGN (see main.c), so children are auto-reaped and waitpid()
+     * can't be used to detect a self-exit (it returns ECHILD).  Probe liveness
+     * with kill(pid, 0): 0 means alive, ESRCH means the process is gone.  This
+     * means we can't recover the exit code/signal, only the fact of exit. */
 
     // Check mediaMTX
     if (pm->mediamtx_pid > 0 && kill(pm->mediamtx_pid, 0) != 0 && errno == ESRCH)

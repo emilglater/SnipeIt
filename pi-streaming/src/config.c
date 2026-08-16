@@ -207,8 +207,8 @@ int config_probe_video(StreamingConfig *config)
         return -1;
     }
 
-    // For a named pipe (FIFO), ffprobe would block waiting for data.
-    // Use known camera parameters instead: picamera2 encodes 1080p at 30fps.
+    /* For a named pipe (FIFO), ffprobe would block waiting for data.
+     * Use known camera parameters instead: picamera2 encodes 1080p at 30fps. */
     if (config_is_fifo(config->video_path))
     {
         config->video_duration_sec = 0.0;
@@ -230,8 +230,8 @@ int config_probe_video(StreamingConfig *config)
     char command[MAX_PATH_LENGTH + 256];
     char output[1024];
 
-    // Use ffprobe to get video information
-    // Format: duration,r_frame_rate,width,height
+    /* Use ffprobe to get video information
+     * Format: duration,r_frame_rate,width,height */
     snprintf(command, sizeof(command),
         "ffprobe -v quiet -select_streams v:0 "
         "-show_entries format=duration:stream=r_frame_rate,width,height "
@@ -255,8 +255,8 @@ int config_probe_video(StreamingConfig *config)
         // Remove newline
         output[strcspn(output, "\n")] = '\0';
 
-        // Try to parse different output formats
-        // ffprobe outputs: width,height,fps (stream) and duration (format) on separate lines
+        /* Try to parse different output formats
+         * ffprobe outputs: width,height,fps (stream) and duration (format) on separate lines */
         if (strchr(output, '/'))
         {
             // This line contains FPS (e.g., "1920,1080,30/1")
