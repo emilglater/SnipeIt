@@ -2,7 +2,7 @@
  * tracker.c
  *
  * Greedy nearest-neighbour tracker in motion-compensated angular space.
- * See tracker.h and TRACKER_DESIGN.md.
+ * See tracker.h for the design rationale.
  */
 
 #include "tracker.h"
@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ---- Tunables (see TRACKER_DESIGN.md) ------------------------------------ */
+/* ---- Tunables ------------------------------------------------------------ */
 #define GATE_MIN_DEG   2.0f    /* minimum association gate (degrees)           */
 #define GATE_K         1.5f    /* gate also scales with target angular width   */
 #define MAX_COAST_MS   1500u   /* delete a track unseen for this long          */

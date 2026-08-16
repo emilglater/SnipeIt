@@ -18,6 +18,10 @@ test_tracker
 # Logs
 *.log
 
+# Cross-team handoff notes (Pi <-> Orin <-> app). Working correspondence, not
+# project documentation; the durable content belongs in the architecture docs.
+notes/
+
 # Test videos
 *.mp4
 

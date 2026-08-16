@@ -15,10 +15,10 @@
  *
  * Algorithm: greedy nearest-neighbour association in angular space with a
  * per-track lifecycle (spawn / coast / delete) and EMA bearing smoothing.
- * Deterministic and light — sufficient for the small target counts here. See
- * TRACKER_DESIGN.md. A constant-velocity bearing predictor is a documented
- * extension point (tracker.c) if fast slews ever move a target more than the
- * gate between frames.
+ * Deterministic and light — sufficient for the small target counts here. A
+ * constant-velocity bearing predictor is a documented extension point
+ * (tracker.c) if fast slews ever move a target more than the gate between
+ * frames.
  *
  * Threading: all state is touched only on the Orin receiver thread (inside
  * orin_detection_handler), so the tracker needs no lock of its own.

@@ -167,7 +167,7 @@ static bool start_frame_sender(AppState *app)
      * closed GOP — not left to x265's scene-adaptive insertion. 12 frames is
      * ~5 s worst-case blind time at the measured ~2.4 fps encode rate (keyint
      * counts FRAMES, so wall-clock shrinks when light/fps improves). Keyframe
-     * bitrate cost is ~+4%. See orin/HANDOFF_PI_GOP_FIX.md. */
+     * bitrate cost is ~+4%. */
     cfg.key_int_max       = 12;
     cfg.x265_extra        = "pools=2:keyint=12:min-keyint=12:scenecut=0:open-gop=0";
     cfg.orin_branch       = app->config.orin_enabled;
