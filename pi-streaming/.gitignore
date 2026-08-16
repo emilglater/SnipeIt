@@ -2,19 +2,6 @@
 mediamtx
 mediamtx_*.tar.gz
 
-# Compiled binaries
-streaming_server
-orin_live_loop
-orin_rtp_stream
-orin_sei_capture
-orin_sender_demo
-test_aiming
-test_detection_msg
-test_orin_receiver
-test_pose_ring
-test_sei_frame_id
-test_tracker
-
 # Logs
 *.log
 

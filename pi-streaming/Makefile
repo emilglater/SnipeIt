@@ -1,14 +1,32 @@
 # Makefile for Pi Streaming System
 #
 # Usage:
-#   make              - Build main streaming server
+#   make              - Build the streaming server into bin/
 #   make all          - Build everything
-#   make clean        - Remove built files
+#   make test_orin    - Build and run the Orin-module unit tests
+#   make clean        - Remove build/ and bin/
+#
+# Build output is kept out of the source tree: object files (plus the .d
+# dependency files gcc generates) go to build/, executables to bin/. Both are
+# gitignored.
 
 CC      = gcc
 CFLAGS  = -Wall -Wextra -g -O2 -D_GNU_SOURCE -Isrc -Iorin -Iacoustic -I../src
 LDFLAGS = -L../bin/debug -lsnipeit -lwebsockets -lm -pthread -luring -lgpiod -lfftw3f -lasound -lzmq
-# Source files
+
+# -MMD -MP make gcc emit a .d file per object listing the headers it included,
+# so touching a header rebuilds exactly the objects that use it. This replaces
+# the hand-maintained header list the old Makefile had to keep in sync.
+DEPFLAGS = -MMD -MP
+
+ZMQ_LIBS   = -lzmq
+GST_CFLAGS = $(shell pkg-config --cflags gstreamer-1.0 2>/dev/null)
+GST_LIBS   = $(shell pkg-config --libs gstreamer-1.0 2>/dev/null)
+
+BUILD_DIR = build
+BIN_DIR   = bin
+
+# Source files linked into the streaming server.
 SRCS = src/main.c src/websocket_server.c src/process_manager.c src/config.c \
        src/ddl_bridge.c \
        acoustic/acoustic_bridge.c acoustic/acoustic_config.c acoustic/ring_buffer.c \
@@ -16,117 +34,53 @@ SRCS = src/main.c src/websocket_server.c src/process_manager.c src/config.c \
        acoustic/alsa_capture.c \
        orin/pose_ring.c orin/detection_msg.c orin/aiming.c orin/orin_receiver.c \
        orin/sei_frame_id.c orin/frame_sender.c orin/tracker.c
-HDRS = src/websocket_server.h src/process_manager.h src/config.h src/ddl_bridge.h \
-       acoustic/acoustic_bridge.h acoustic/acoustic_config.h acoustic/ring_buffer.h \
-       acoustic/onset_detector.h acoustic/gcc_phat.h acoustic/srp_phat.h \
-       acoustic/alsa_capture.h \
-       orin/pose_ring.h orin/detection_msg.h orin/aiming.h orin/orin_receiver.h \
-       orin/sei_frame_id.h orin/frame_sender.h orin/tracker.h
 
+# Objects mirror the source directory structure inside build/.
+OBJS = $(SRCS:%.c=$(BUILD_DIR)/%.o)
+DEPS = $(OBJS:.o=.d)
+
+SERVER      = $(BIN_DIR)/streaming_server
 SNIPEIT_LIB = ../bin/debug/libsnipeit.a
 
-.PHONY: all clean help
+# Convenience names so `make streaming_server` / `make test_tracker` still work
+# without typing the bin/ prefix.
+.PHONY: all clean help streaming_server test_orin \
+        test_pose_ring test_detection_msg test_aiming test_sei_frame_id \
+        test_tracker test_orin_receiver \
+        orin_sender_demo orin_sei_capture orin_rtp_stream orin_live_loop
 
 all: streaming_server
 
-# Standalone unit test for the Pi<->Orin frame_id -> pose ring buffer.
-# Self-contained: only needs pose_ring.c + pthread, no libsnipeit.
-test_pose_ring: test/test_pose_ring.c orin/pose_ring.c orin/pose_ring.h
-	$(CC) $(CFLAGS) -o $@ test/test_pose_ring.c orin/pose_ring.c -pthread
-	@echo "Build complete: test_pose_ring  (run: ./test_pose_ring)"
+streaming_server:   $(SERVER)
+test_pose_ring:     $(BIN_DIR)/test_pose_ring
+test_detection_msg: $(BIN_DIR)/test_detection_msg
+test_aiming:        $(BIN_DIR)/test_aiming
+test_sei_frame_id:  $(BIN_DIR)/test_sei_frame_id
+test_tracker:       $(BIN_DIR)/test_tracker
+test_orin_receiver: $(BIN_DIR)/test_orin_receiver
+orin_sender_demo:   $(BIN_DIR)/orin_sender_demo
+orin_sei_capture:   $(BIN_DIR)/orin_sei_capture
+orin_rtp_stream:    $(BIN_DIR)/orin_rtp_stream
+orin_live_loop:     $(BIN_DIR)/orin_live_loop
 
-# Standalone unit test for the Orin detection-message JSON parser.
-# Self-contained: only needs detection_msg.c + libm (lround).
-test_detection_msg: test/test_detection_msg.c orin/detection_msg.c orin/detection_msg.h
-	$(CC) $(CFLAGS) -o $@ test/test_detection_msg.c orin/detection_msg.c -lm
-	@echo "Build complete: test_detection_msg  (run: ./test_detection_msg)"
+$(BIN_DIR):
+	mkdir -p $@
 
-# Standalone unit test for the bbox+pose -> servo command geometry.
-# Self-contained: aiming.c + libm (servo_config.h macros come via -I../src).
-test_aiming: test/test_aiming.c orin/aiming.c orin/aiming.h
-	$(CC) $(CFLAGS) -o $@ test/test_aiming.c orin/aiming.c -lm
-	@echo "Build complete: test_aiming  (run: ./test_aiming)"
-
-# Standalone unit test for the H.265 SEI frame_id carrier. Pure bytes.
-test_sei_frame_id: test/test_sei_frame_id.c orin/sei_frame_id.c orin/sei_frame_id.h
-	$(CC) $(CFLAGS) -o $@ test/test_sei_frame_id.c orin/sei_frame_id.c
-	@echo "Build complete: test_sei_frame_id  (run: ./test_sei_frame_id)"
-
-# Standalone unit test for the angular-space tracker (needs aiming + libm).
-test_tracker: test/test_tracker.c orin/tracker.c orin/aiming.c \
-              orin/tracker.h orin/aiming.h orin/detection_msg.h orin/pose_ring.h
-	$(CC) $(CFLAGS) -o $@ test/test_tracker.c orin/tracker.c orin/aiming.c -lm
-	@echo "Build complete: test_tracker  (run: ./test_tracker)"
-
-# --- ZeroMQ-dependent targets ----------------------------------------------
-# These need libzmq3-dev (sudo apt install libzmq3-dev). The receiver itself is
-# part of streaming_server; these are the standalone integration targets.
-ZMQ_LIBS = -lzmq
-
-# Integration test: real PUSH->PULL round-trip through the receiver.
-test_orin_receiver: test/test_orin_receiver.c orin/orin_receiver.c \
-                    orin/detection_msg.c orin/pose_ring.c \
-                    orin/orin_receiver.h orin/detection_msg.h orin/pose_ring.h
-	$(CC) $(CFLAGS) -o $@ test/test_orin_receiver.c orin/orin_receiver.c \
-	      orin/detection_msg.c orin/pose_ring.c $(ZMQ_LIBS) -lm -pthread
-	@echo "Build complete: test_orin_receiver  (run: ./test_orin_receiver)"
-
-# --- GStreamer-dependent demos ---------------------------------------------
-# Need the GStreamer dev packages. The frame sender itself is part of
-# streaming_server; these exercise it standalone, without the full service.
-GST_CFLAGS = $(shell pkg-config --cflags gstreamer-1.0 2>/dev/null)
-GST_LIBS   = $(shell pkg-config --libs gstreamer-1.0 2>/dev/null)
-
-# Camera-less smoke test of the H.265 frame sender + per-frame SEI tagging.
-orin_sender_demo: demo/sender_demo.c orin/frame_sender.c orin/sei_frame_id.c \
-                  orin/frame_sender.h orin/sei_frame_id.h
-	$(CC) $(CFLAGS) $(GST_CFLAGS) -o $@ \
-	      demo/sender_demo.c orin/frame_sender.c orin/sei_frame_id.c $(GST_LIBS)
-	@echo "Build complete: orin_sender_demo  (run: ./orin_sender_demo [seconds])"
-
-# Capture a short SEI-tagged H.265 elementary stream to a file, for the Orin
-# side to validate NVDEC-decode + SEI extraction offline.
-orin_sei_capture: demo/sei_capture_demo.c orin/frame_sender.c orin/sei_frame_id.c \
-                  orin/frame_sender.h orin/sei_frame_id.h
-	$(CC) $(CFLAGS) $(GST_CFLAGS) -o $@ \
-	      demo/sei_capture_demo.c orin/frame_sender.c orin/sei_frame_id.c $(GST_LIBS)
-	@echo "Build complete: orin_sei_capture  (run: ./orin_sei_capture <out.hevc> [seconds])"
-
-# Live RTP/H.265+SEI streamer to the Orin (real camera by default).
-orin_rtp_stream: demo/rtp_stream_demo.c orin/frame_sender.c orin/sei_frame_id.c \
-                 orin/frame_sender.h orin/sei_frame_id.h
-	$(CC) $(CFLAGS) $(GST_CFLAGS) -o $@ \
-	      demo/rtp_stream_demo.c orin/frame_sender.c orin/sei_frame_id.c $(GST_LIBS)
-	@echo "Build complete: orin_rtp_stream  (run: ./orin_rtp_stream [host] [port] [seconds] [camera|test])"
-
-# Full single-process live loop: sender + PULL receiver sharing a pose ring.
-# Needs BOTH GStreamer and ZeroMQ. Proves transport + SEI echo + pose-join +
-# aiming end to end with the Orin.
-orin_live_loop: demo/live_loop_demo.c orin/frame_sender.c orin/sei_frame_id.c \
-                orin/orin_receiver.c orin/detection_msg.c orin/pose_ring.c \
-                orin/aiming.c \
-                orin/frame_sender.h orin/sei_frame_id.h orin/orin_receiver.h \
-                orin/detection_msg.h orin/pose_ring.h orin/aiming.h
-	$(CC) $(CFLAGS) $(GST_CFLAGS) -o $@ \
-	      demo/live_loop_demo.c orin/frame_sender.c orin/sei_frame_id.c \
-	      orin/orin_receiver.c orin/detection_msg.c orin/pose_ring.c orin/aiming.c \
-	      $(GST_LIBS) $(ZMQ_LIBS) -lm -pthread
-	@echo "Build complete: orin_live_loop  (run: ./orin_live_loop [orin_host] [rtp_port] [zmq_bind] [seconds] [camera|test])"
-
-# All Orin-module tests that DON'T need zmq.
-test_orin: test_pose_ring test_detection_msg test_aiming test_sei_frame_id test_tracker
-	@echo "Running pose_ring + detection_msg + aiming + sei + tracker tests..."
-	./test_pose_ring && ./test_detection_msg && ./test_aiming && ./test_sei_frame_id && ./test_tracker
+# --- Streaming server -------------------------------------------------------
 
 # Build the static library via the root Makefile.
 $(SNIPEIT_LIB):
 	$(MAKE) -C .. lib
 
-streaming_server: $(SRCS) $(HDRS) $(SNIPEIT_LIB)
-	$(CC) $(CFLAGS) $(GST_CFLAGS) -o $@ $(SRCS) $(LDFLAGS) $(GST_LIBS)
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(GST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+$(SERVER): $(OBJS) $(SNIPEIT_LIB) | $(BIN_DIR)
+	$(CC) $(CFLAGS) $(GST_CFLAGS) -o $@ $(OBJS) $(LDFLAGS) $(GST_LIBS)
 	@echo ""
 	@echo "========================================"
-	@echo "  Build complete: streaming_server"
+	@echo "  Build complete: $(SERVER)"
 	@echo "========================================"
 	@echo ""
 	@echo "Before running, make sure to:"
@@ -137,22 +91,107 @@ streaming_server: $(SRCS) $(HDRS) $(SNIPEIT_LIB)
 	@echo "  ./script/start.sh [config_file]   (creates the camera FIFO, then runs the server)"
 	@echo ""
 
-# Clean build artifacts
+# --- Unit tests -------------------------------------------------------------
+# Each test compiles its own sources directly rather than reusing build/*.o:
+# they are deliberately self-contained (no libsnipeit, no GStreamer), which is
+# what lets them run on a host without the full dependency set.
+
+# Pi<->Orin frame_id -> pose ring buffer. Needs pose_ring.c + pthread only.
+$(BIN_DIR)/test_pose_ring: test/test_pose_ring.c orin/pose_ring.c orin/pose_ring.h | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ test/test_pose_ring.c orin/pose_ring.c -pthread
+	@echo "Build complete: $@"
+
+# Orin detection-message JSON parser. Needs detection_msg.c + libm (lround).
+$(BIN_DIR)/test_detection_msg: test/test_detection_msg.c orin/detection_msg.c orin/detection_msg.h | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ test/test_detection_msg.c orin/detection_msg.c -lm
+	@echo "Build complete: $@"
+
+# bbox+pose -> servo command geometry. servo_config.h macros come via -I../src.
+$(BIN_DIR)/test_aiming: test/test_aiming.c orin/aiming.c orin/aiming.h | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ test/test_aiming.c orin/aiming.c -lm
+	@echo "Build complete: $@"
+
+# H.265 SEI frame_id carrier. Pure bytes, no external deps.
+$(BIN_DIR)/test_sei_frame_id: test/test_sei_frame_id.c orin/sei_frame_id.c orin/sei_frame_id.h | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ test/test_sei_frame_id.c orin/sei_frame_id.c
+	@echo "Build complete: $@"
+
+# Angular-space tracker (needs aiming + libm).
+$(BIN_DIR)/test_tracker: test/test_tracker.c orin/tracker.c orin/aiming.c \
+                         orin/tracker.h orin/aiming.h orin/detection_msg.h orin/pose_ring.h | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ test/test_tracker.c orin/tracker.c orin/aiming.c -lm
+	@echo "Build complete: $@"
+
+# Integration test: real ZeroMQ PUSH->PULL round-trip through the receiver.
+# Needs libzmq3-dev (sudo apt install libzmq3-dev).
+$(BIN_DIR)/test_orin_receiver: test/test_orin_receiver.c orin/orin_receiver.c \
+                               orin/detection_msg.c orin/pose_ring.c \
+                               orin/orin_receiver.h orin/detection_msg.h orin/pose_ring.h | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ test/test_orin_receiver.c orin/orin_receiver.c \
+	      orin/detection_msg.c orin/pose_ring.c $(ZMQ_LIBS) -lm -pthread
+	@echo "Build complete: $@"
+
+# All Orin-module tests that DON'T need zmq.
+test_orin: test_pose_ring test_detection_msg test_aiming test_sei_frame_id test_tracker
+	@echo "Running pose_ring + detection_msg + aiming + sei + tracker tests..."
+	$(BIN_DIR)/test_pose_ring && $(BIN_DIR)/test_detection_msg && \
+	$(BIN_DIR)/test_aiming && $(BIN_DIR)/test_sei_frame_id && $(BIN_DIR)/test_tracker
+
+# --- Demos ------------------------------------------------------------------
+# Need the GStreamer dev packages. The frame sender itself is part of the
+# streaming server; these exercise it standalone, without the full service.
+
+# Camera-less smoke test of the H.265 frame sender + per-frame SEI tagging.
+$(BIN_DIR)/orin_sender_demo: demo/sender_demo.c orin/frame_sender.c orin/sei_frame_id.c \
+                             orin/frame_sender.h orin/sei_frame_id.h | $(BIN_DIR)
+	$(CC) $(CFLAGS) $(GST_CFLAGS) -o $@ \
+	      demo/sender_demo.c orin/frame_sender.c orin/sei_frame_id.c $(GST_LIBS)
+	@echo "Build complete: $@  (run: $@ [seconds])"
+
+# Capture a short SEI-tagged H.265 elementary stream to a file, for the Orin
+# side to validate NVDEC-decode + SEI extraction offline.
+$(BIN_DIR)/orin_sei_capture: demo/sei_capture_demo.c orin/frame_sender.c orin/sei_frame_id.c \
+                             orin/frame_sender.h orin/sei_frame_id.h | $(BIN_DIR)
+	$(CC) $(CFLAGS) $(GST_CFLAGS) -o $@ \
+	      demo/sei_capture_demo.c orin/frame_sender.c orin/sei_frame_id.c $(GST_LIBS)
+	@echo "Build complete: $@  (run: $@ <out.hevc> [seconds])"
+
+# Live RTP/H.265+SEI streamer to the Orin (real camera by default).
+$(BIN_DIR)/orin_rtp_stream: demo/rtp_stream_demo.c orin/frame_sender.c orin/sei_frame_id.c \
+                            orin/frame_sender.h orin/sei_frame_id.h | $(BIN_DIR)
+	$(CC) $(CFLAGS) $(GST_CFLAGS) -o $@ \
+	      demo/rtp_stream_demo.c orin/frame_sender.c orin/sei_frame_id.c $(GST_LIBS)
+	@echo "Build complete: $@  (run: $@ [host] [port] [seconds] [camera|test])"
+
+# Full single-process live loop: sender + PULL receiver sharing a pose ring.
+# Needs BOTH GStreamer and ZeroMQ. Proves transport + SEI echo + pose-join +
+# aiming end to end with the Orin.
+$(BIN_DIR)/orin_live_loop: demo/live_loop_demo.c orin/frame_sender.c orin/sei_frame_id.c \
+                           orin/orin_receiver.c orin/detection_msg.c orin/pose_ring.c \
+                           orin/aiming.c \
+                           orin/frame_sender.h orin/sei_frame_id.h orin/orin_receiver.h \
+                           orin/detection_msg.h orin/pose_ring.h orin/aiming.h | $(BIN_DIR)
+	$(CC) $(CFLAGS) $(GST_CFLAGS) -o $@ \
+	      demo/live_loop_demo.c orin/frame_sender.c orin/sei_frame_id.c \
+	      orin/orin_receiver.c orin/detection_msg.c orin/pose_ring.c orin/aiming.c \
+	      $(GST_LIBS) $(ZMQ_LIBS) -lm -pthread
+	@echo "Build complete: $@  (run: $@ [orin_host] [rtp_port] [zmq_bind] [seconds] [camera|test])"
+
+# --- Housekeeping -----------------------------------------------------------
+
 clean:
-	rm -f streaming_server test_pose_ring test_detection_msg test_aiming test_sei_frame_id test_tracker test_orin_receiver orin_sender_demo orin_sei_capture orin_rtp_stream orin_live_loop
-	rm -f *.o orin/*.o
+	rm -rf $(BUILD_DIR) $(BIN_DIR)
 	rm -f /tmp/mediamtx.log /tmp/ffmpeg.log
 	@echo "Clean complete"
 
-# Help
 help:
 	@echo "Pi Streaming System - Makefile"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all              - Build all targets (default)"
-	@echo "  streaming_server - Build main streaming server"
+	@echo "  streaming_server - Build the streaming server into bin/"
 	@echo "  test_orin        - Build and run the Orin-module unit tests"
-	@echo "  clean            - Remove built files"
+	@echo "  clean            - Remove build/ and bin/"
 	@echo "  help             - Show this help"
 	@echo ""
 	@echo "Quick start:"
@@ -161,3 +200,7 @@ help:
 	@echo "  3. Start the detector on the Orin"
 	@echo "  4. ./script/start.sh"
 	@echo "  5. Connect Android app"
+
+# Header dependencies discovered by -MMD. Must come last; the leading '-'
+# ignores them on a clean tree where no .d files exist yet.
+-include $(DEPS)

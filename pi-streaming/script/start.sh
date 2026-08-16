@@ -42,4 +42,4 @@ trap cleanup EXIT
 # servos, Orin ZeroMQ receiver) + the frame sender, then serves the app. Ctrl+C
 # sends SIGINT, which streaming_server handles by tearing down all its children.
 echo "[start] Launching streaming_server (Ctrl+C to stop the whole pipeline)..."
-./streaming_server "$@"
+./bin/streaming_server "$@"
