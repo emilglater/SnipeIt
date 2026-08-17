@@ -45,6 +45,9 @@
 #define POSE_SETTLE_JUMP_DEG 3.0f
 #define POSE_SETTLE_MS       300u
 
+/* Where the optional per-detection log goes (SNIPEIT_LOG_DETECTIONS=1). */
+#define DET_LOG_PATH "/tmp/detections.log"
+
 /* Period of the periodic pipeline stats line (0 disables). */
 #define BRIDGE_STATS_PERIOD_MS 5000u
 
@@ -93,6 +96,13 @@ struct DdlBridge
     bool             det_up;
     int              det_head, det_tail, det_count;
     char             det_queue[DET_FWD_QUEUE][WS_MAX_MSG_SIZE];
+
+    /* Optional detection log, enabled per run with SNIPEIT_LOG_DETECTIONS=1.
+     * Its own file rather than stdout so the operational log stays readable and
+     * the detection stream can be grepped or diffed across runs. Opened in
+     * ddl_bridge_start, written only by the main loop in
+     * ddl_bridge_pump_detections, closed in ddl_bridge_stop. */
+    FILE*            det_log;
 };
 
 static unsigned long long now_ms_mono64(void)
@@ -532,6 +542,21 @@ DdlBridge* ddl_bridge_start(WebSocketServer* ws, unsigned int period_ms)
     {
         b->det_up = true;   /* detection->app forward queue ready */
     }
+
+    if (getenv("SNIPEIT_LOG_DETECTIONS") != NULL)
+    {
+        b->det_log = fopen(DET_LOG_PATH, "w");
+        if (b->det_log == NULL)
+        {
+            fprintf(stderr, "[BRIDGE] WARNING: could not open %s: detection "
+                            "logging disabled\n", DET_LOG_PATH);
+        }
+        else
+        {
+            setvbuf(b->det_log, NULL, _IOLBF, 0);   /* line-buffered: tail -f works */
+            printf("[BRIDGE] Detection logging enabled -> %s\n", DET_LOG_PATH);
+        }
+    }
     if (pthread_mutex_init(&b->lockon_mtx, NULL) == 0)
     {
         b->lockon_up  = true;
@@ -634,6 +659,12 @@ void ddl_bridge_stop(DdlBridge* b)
         pthread_mutex_destroy(&b->lockon_mtx);
         b->lockon_up = false;
     }
+    if(b->det_log != NULL)
+    {
+        fclose(b->det_log);
+        b->det_log = NULL;
+    }
+
     if(b->det_up)
     {
         pthread_mutex_destroy(&b->det_mtx);
@@ -843,9 +874,14 @@ void ddl_bridge_pump_detections(DdlBridge* b)
         pthread_mutex_unlock(&b->det_mtx);
 
         (void)ws_send_json(b->ws, line, len);
-        /* Unconditional: every forwarded detection is printed, at the Orin's
-         * full message rate. Gate or drop this before shipping. */
-        printf("[BRIDGE] Forwarded detection JSON: %s\n\n", line);
+
+        /* Off unless SNIPEIT_LOG_DETECTIONS was set for this run. The JSON
+         * already carries the stable track id and the confirmed flag, so the
+         * line is the full record of what the app was told. */
+        if (b->det_log != NULL)
+        {
+            fprintf(b->det_log, "%llu %s\n", now_ms_mono64(), line);
+        }
     }
 }
 
