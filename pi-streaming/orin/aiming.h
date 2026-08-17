@@ -2,8 +2,8 @@
  * aiming.h
  *
  * Geometry for the Pi-side lock-on: turn a detection bounding box plus the
- * capture-time servo pose into an absolute pan/tilt command (and, as a bonus,
- * a range estimate). This is the body the Orin-receiver callback hands off to.
+ * capture-time servo pose into an absolute pan/tilt command, plus a range
+ * estimate. The Orin-receiver callback calls into here.
  *
  * Pipeline position:
  *   detection (bbox, frame_id) --[receiver]--> join frame_id -> capture pose
@@ -17,13 +17,14 @@
  *
  * IMPORTANT — two values that must match the rest of the system:
  *   1. (frame_w, frame_h) is the pixel coordinate space the *bbox* lives in.
- *      The Orin must return boxes in this same space. Recommended contract:
- *      the full 1920x1080 source-frame coordinates (un-letterboxed), matching
- *      what person_streamer.py already does when it rescales lores->main.
+ *      The Orin MUST return boxes in this same space: full 1920x1080
+ *      source-frame pixels, with the detector's letterbox already reversed.
+ *      This is a hard contract, not a preference - aim_compute() and the
+ *      app-facing JSON in ddl_bridge.c both assume it.
  *   2. (hfov_deg, vfov_deg) must be the FOV of THAT frame — i.e. the effective
- *      FOV after the sensor crop the 1080p path uses. Confirm with
- *      script/probe_camera_fov.py on the live camera; the defaults below are
- *      provisional (see aiming.c).
+ *      FOV after the sensor crop the 1080p path uses. The defaults were
+ *      measured on this rig with script/probe_camera_fov.py; see aiming.c for
+ *      the measurement and when to re-run it.
  */
 
 #ifndef ORIN_AIMING_H
@@ -66,10 +67,10 @@ typedef struct
 /**
  * aim_config_default - Fill cfg with the project defaults.
  *
- * FOV defaults are PROVISIONAL (full-FOV sensor mode + 16:9 crop reasoning);
- * confirm with probe_camera_fov.py. Frame defaults to 1920x1080. Servo limits
- * default to the SERVO_*_{MIN,MAX}_ANGLE_DEG values. Signs default to a common
- * mounting and MUST be verified against the rig (see header).
+ * FOV defaults are MEASURED on this rig (IMX477 + 16 mm; see aiming.c for the
+ * date and the arithmetic). Frame defaults to 1920x1080. Servo limits come from
+ * the SERVO_*_{MIN,MAX}_ANGLE_DEG values. Both signs are verified against the
+ * rig; re-verify with a manual jog whenever a servo axis is remounted.
  */
 void aim_config_default(AimConfig *cfg);
 

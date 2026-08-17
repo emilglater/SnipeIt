@@ -63,8 +63,15 @@ OrinReceiver *orin_receiver_start(const char *endpoint, PoseRing *ring,
  */
 void orin_receiver_stop(OrinReceiver *r);
 
-/* Diagnostic counters (monotonic since start). Safe to call any time;
- * out params may be NULL if not wanted. */
+/**
+ * orin_receiver_stats - Read the diagnostic counters (monotonic since start).
+ * @r:              Receiver handle. NULL is a no-op.
+ * @received:       Messages received. May be NULL.
+ * @parse_failures: Messages that failed to parse. May be NULL.
+ * @pose_misses:    Messages with no matching pose. May be NULL.
+ *
+ * Read racily off the receive thread: fine for reporting, not for control.
+ */
 void orin_receiver_stats(const OrinReceiver *r,
                          unsigned long *received,
                          unsigned long *parse_failures,

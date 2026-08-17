@@ -23,7 +23,13 @@
  *   VFOV = 2*atan( 2160*1.55um / (2*16mm) )  = 11.95 deg
  *
  * Re-run probe_camera_fov.py and update these if the lens, sensor mode, or the
- * main-stream size/aspect changes. */
+ * main-stream size/aspect changes.
+ *
+ * CAVEAT: measured under the old picamera2 capture path; the pipeline now uses
+ * libcamerasrc, which negotiates its own sensor mode and ScalerCrop. A live run
+ * on 2026-08-16 confirmed libcamerasrc selects the SAME 2028x1080 sensor mode
+ * for a 1920x1080 output, so the mode matches. The ScalerCrop it applies has
+ * not been checked; confirm that before trusting these to sub-degree accuracy. */
 #define AIM_DEFAULT_HFOV_DEG   21.07f
 #define AIM_DEFAULT_VFOV_DEG   11.95f
 #define AIM_DEFAULT_FRAME_W    1920
@@ -54,9 +60,8 @@ void aim_config_default(AimConfig *cfg)
      * angle -> pan_sign=-1). Tilt RE-verified 2026-07-06 after the vertical
      * mount changed (range now 70..150, level ~110): increasing the tilt
      * angle now pitches the camera DOWN, so a bottom-of-image target must
-     * RAISE the tilt angle -> tilt_sign=+1. (The old -1 drove the tilt away
-     * from the target into the 70-deg clamp on lock.) Re-verify both signs
-     * with a manual jog whenever a servo axis is remounted. */
+     * RAISE the tilt angle -> tilt_sign=+1. Re-verify both signs with a
+     * manual jog whenever a servo axis is remounted. */
     cfg->pan_sign     = -1.0f;
     cfg->tilt_sign    = +1.0f;
     cfg->pan_min_deg  = SERVO_HORIZONTAL_MIN_ANGLE_DEG;

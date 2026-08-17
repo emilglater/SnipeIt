@@ -18,10 +18,13 @@
  *   tiny capacity (~16), so contention is negligible.
  *
  *   Capacity must cover the worst-case round trip
- *   (capture -> encode -> GigE transfer -> Orin inference -> return),
- *   roughly 10-15 frames. Older entries are silently overwritten; a lookup
- *   for a frame_id that has already been overwritten simply misses, which the
- *   caller treats as "detection too stale to aim on".
+ *   (capture -> encode -> GigE transfer -> Orin inference -> return). Size it
+ *   in TIME, not frames: at the ~2.4-3.4 fps the software encode sustains, 16
+ *   entries is ~5-7 s of history, far more than the round trip needs. Older
+ *   entries are silently overwritten; a lookup for an overwritten frame_id
+ *   simply misses, which the caller treats as "too stale to aim on". A hit is
+ *   necessary but not sufficient: ddl_bridge also gates frames captured inside
+ *   the slew-settling window.
  */
 
 #ifndef ORIN_POSE_RING_H
@@ -31,8 +34,8 @@
 #include <stdint.h>
 #include <pthread.h>
 
-/* Default depth. The spec calls for ~10-15 frames to cover the worst-case
- * capture->inference->return round trip; 16 gives a little headroom. */
+/* Default depth. 16 covers the capture->inference->return round trip with
+ * generous headroom at any frame rate this pipeline has run at. */
 #define POSE_RING_DEFAULT_CAPACITY 16
 
 /* One recorded frame: the servo pose at the instant the frame was captured. */

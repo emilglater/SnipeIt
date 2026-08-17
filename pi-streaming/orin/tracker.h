@@ -1,7 +1,7 @@
 /**
  * tracker.h
  *
- * Pi-side multi-target tracker: turns the Orin's per-frame detection indices
+ * Pi-side multi-target tracker: turns the Orin's per-frame detection ids
  * into STABLE track ids that persist across frames, so the operator can lock
  * onto a specific target and follow it, and the app shows consistent ids.
  *

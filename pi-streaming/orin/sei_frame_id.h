@@ -11,9 +11,9 @@
  *     extension would have to be preserved by every hop.
  *   - It is codec-standard (Rec. ITU-T H.265, user_data_unregistered,
  *     payloadType 5), so the Orin can read it with any HEVC parser.
- *   - On this Pi (Pi 5: software libx265 via FFmpeg, no HW encoder) we cannot
- *     inject per-frame SEI from the FFmpeg CLI, so the sender prepends this SEI
- *     NAL to each access unit at the bitstream level before the muxer/RTP.
+ *   - This Pi (Pi 5) has no hardware encoder and no encoder-level hook for
+ *     per-frame SEI, so the sender splices this NAL into the bitstream itself,
+ *     on a GStreamer pad probe between x265enc and h265parse.
  *
  * Wire detail:
  *   Annex-B prefix-SEI NAL (nal_unit_type 39), payloadType 5

@@ -4,8 +4,10 @@
  * Parsed representation of a detection message coming back from the Orin,
  * plus a focused JSON parser for it.
  *
- * Wire format (newline-delimited JSON, one message per line) — the same
- * "target_detection" schema the on-Pi detector already emits, with a
+ * Wire format: one JSON object per ZeroMQ message. There is no line framing -
+ * the zmq message boundary IS the message boundary; the parser takes ptr+len
+ * and never looks for a newline. The schema matches the "target_detection"
+ * shape the app already consumes, with a
  * top-level "frame_id" added so the Pi can join the detection back to the
  * capture-time servo pose via the pose ring:
  *
@@ -19,10 +21,12 @@
  *     ]
  *   }
  *
- * bbox coordinates are pixels in the Orin's detector-input frame (the Orin
- * decodes the H.265 stream and resizes on its GPU, so the resolution is an
- * Orin-side concern). The downstream geometry on the Pi turns bbox + pose +
- * FOV + known target height into an aiming angle.
+ * bbox coordinates MUST be pixels in the 1920x1080 source frame, with any
+ * detector letterbox/resize already reversed on the Orin. The Pi's aiming
+ * geometry normalises against exactly that size (aiming.h note 1) and the app
+ * overlay consumes the same pixels, so this is a shared contract - not an
+ * Orin-side detail. The Pi turns bbox + pose + FOV + known target height into
+ * an aiming angle.
  *
  * This translation unit deliberately has NO ZeroMQ dependency so the parser
  * can be unit-tested on its own.
@@ -43,7 +47,10 @@
 
 typedef struct
 {
-    char  target_id[ORIN_ID_MAXLEN];  /* "id"   — opaque target label.        */
+    char  target_id[ORIN_ID_MAXLEN];  /* "id" - the Orin's PER-FRAME label.
+                                       * NOT stable across frames; the Pi-side
+                                       * tracker supplies stable ids. Used only
+                                       * as a fallback on a pose-join miss.   */
     char  cls[ORIN_CLASS_MAXLEN];     /* "class" — e.g. "HUMAN".              */
     float confidence;                 /* "confidence" in [0,1].               */
     int   bbox_x;                     /* "bbox.x"      pixels, detector frame. */
