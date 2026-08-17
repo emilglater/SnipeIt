@@ -8,9 +8,10 @@
 
 /* User Libraries */
 #include "config.h"
-// Simple JSON parsing helpers (no external library needed for our simple config)
+/* Substring-based JSON helpers - no external library. They match "key" anywhere
+ * in the document, including inside a string value, and take the first hit. That
+ * is fine for our flat hand-written config; nesting or duplicate keys misparse. */
 
-// Skip whitespace in JSON string
 static const char* skip_whitespace(const char *str)
 {
     while (*str && isspace((unsigned char)*str))
@@ -29,20 +30,16 @@ static int json_get_string(const char *json, const char *key, char *value, size_
     const char *key_pos = strstr(json, search_key);
     if (!key_pos) return -1;
 
-    // Find the colon
     const char *colon = strchr(key_pos + strlen(search_key), ':');
     if (!colon) return -1;
 
-    // Find opening quote of value
     const char *quote_start = strchr(colon, '"');
     if (!quote_start) return -1;
     quote_start++; // Move past the quote
 
-    // Find closing quote
     const char *quote_end = strchr(quote_start, '"');
     if (!quote_end) return -1;
 
-    // Copy value
     size_t len = quote_end - quote_start;
     if (len >= value_size) len = value_size - 1;
 
@@ -52,7 +49,6 @@ static int json_get_string(const char *json, const char *key, char *value, size_
     return 0;
 }
 
-// Extract integer value from JSON
 static int json_get_int(const char *json, const char *key, int *value)
 {
     char search_key[128];
@@ -70,7 +66,6 @@ static int json_get_int(const char *json, const char *key, int *value)
     return 0;
 }
 
-// Extract boolean value from JSON
 static int json_get_bool(const char *json, const char *key, bool *value)
 {
     char search_key[128];
@@ -112,7 +107,6 @@ void config_init_defaults(StreamingConfig *config)
         .rtsp_port = 8554,
         .rtsp_stream_name = "stream",
         .loop_video = false,
-        .detection_frame_interval = 5,
         .video_duration_sec = 0.0,
         .video_fps = 30.0,
         .video_width = 0,
@@ -138,7 +132,6 @@ int config_load(StreamingConfig *config, const char *config_path)
         return -1;
     }
 
-    // Get file size
     fseek(file, 0, SEEK_END);
     long file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
@@ -150,7 +143,6 @@ int config_load(StreamingConfig *config, const char *config_path)
         return -1;
     }
 
-    // Read file contents
     char *json = malloc(file_size + 1);
     if (!json)
     {
@@ -170,7 +162,6 @@ int config_load(StreamingConfig *config, const char *config_path)
     }
     json[file_size] = '\0';
 
-    // Initialize with defaults first
     config_init_defaults(config);
 
     // Parse JSON fields (ignore errors for optional fields)
@@ -180,7 +171,6 @@ int config_load(StreamingConfig *config, const char *config_path)
     json_get_string(json, "rtsp_stream_name", config->rtsp_stream_name, sizeof(config->rtsp_stream_name));
     json_get_int(json, "websocket_port", &config->websocket_port);
     json_get_int(json, "rtsp_port", &config->rtsp_port);
-    json_get_int(json, "detection_frame_interval", &config->detection_frame_interval);
     json_get_bool(json, "loop_video", &config->loop_video);
 
     json_get_bool(json, "orin_enabled", &config->orin_enabled);
@@ -207,8 +197,11 @@ int config_probe_video(StreamingConfig *config)
         return -1;
     }
 
-    /* For a named pipe (FIFO), ffprobe would block waiting for data.
-     * Use known camera parameters instead: picamera2 encodes 1080p at 30fps. */
+    /* For a named pipe (FIFO), ffprobe would block waiting for data. Hardcode
+     * the capture parameters instead. These MUST match what the frame sender's
+     * app-preview branch actually writes: app_preview_width/height/fps default
+     * to 0 (= use the capture values, 1920x1080/30). Setting them in the config
+     * file would silently desync video_fps here from FFmpeg's -r flag. */
     if (config_is_fifo(config->video_path))
     {
         config->video_duration_sec = 0.0;
@@ -220,7 +213,6 @@ int config_probe_video(StreamingConfig *config)
         return 0;
     }
 
-    // Check if file exists
     if (access(config->video_path, R_OK) != 0)
     {
         fprintf(stderr, "[CONFIG] Video file not accessible: %s\n", config->video_path);
@@ -245,7 +237,6 @@ int config_probe_video(StreamingConfig *config)
         return -1;
     }
 
-    // Read output lines
     double duration = 0.0;
     int width = 0, height = 0;
     char fps_str[32] = "";
@@ -311,7 +302,6 @@ void config_print(const StreamingConfig *config)
     printf("  Video FPS:         %.2f\n", config->video_fps);
     printf("  Video dimensions:  %dx%d\n", config->video_width, config->video_height);
     printf("  Loop video:        %s\n", config->loop_video ? "yes" : "no");
-    printf("  Detection interval: every %d frames\n", config->detection_frame_interval);
     printf("  mediaMTX path:     %s\n", config->mediamtx_path);
     printf("  mediaMTX config:   %s\n", config->mediamtx_config);
     printf("  WebSocket port:    %d\n", config->websocket_port);
@@ -324,7 +314,6 @@ int config_validate(const StreamingConfig *config)
 {
     int errors = 0;
 
-    // Check video path
     if (strlen(config->video_path) == 0)
     {
         fprintf(stderr, "[CONFIG] Error: video_path is required\n");
@@ -336,21 +325,18 @@ int config_validate(const StreamingConfig *config)
         errors++;
     }
 
-    // Check mediaMTX binary
     if (access(config->mediamtx_path, X_OK) != 0)
     {
         fprintf(stderr, "[CONFIG] Error: mediaMTX not executable: %s\n", config->mediamtx_path);
         errors++;
     }
 
-    // Check mediaMTX config
     if (access(config->mediamtx_config, R_OK) != 0)
     {
         fprintf(stderr, "[CONFIG] Error: mediaMTX config not readable: %s\n", config->mediamtx_config);
         errors++;
     }
 
-    // Check ports
     if (config->websocket_port < 1024 || config->websocket_port > 65535)
     {
         fprintf(stderr, "[CONFIG] Error: invalid websocket_port: %d\n", config->websocket_port);
@@ -360,12 +346,6 @@ int config_validate(const StreamingConfig *config)
     if (config->rtsp_port < 1024 || config->rtsp_port > 65535)
     {
         fprintf(stderr, "[CONFIG] Error: invalid rtsp_port: %d\n", config->rtsp_port);
-        errors++;
-    }
-
-    if (config->detection_frame_interval < 1)
-    {
-        fprintf(stderr, "[CONFIG] Error: detection_frame_interval must be >= 1\n");
         errors++;
     }
 

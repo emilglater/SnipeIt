@@ -19,14 +19,13 @@
 
 typedef struct
 {
-    char video_path[MAX_PATH_LENGTH];       // Path to the video file
+    char video_path[MAX_PATH_LENGTH];       // Video source: a FIFO (live camera) or a real file
     char mediamtx_path[MAX_PATH_LENGTH];    // Path to mediaMTX binary
     char mediamtx_config[MAX_PATH_LENGTH];  // Path to mediaMTX config file
     int websocket_port;                     // WebSocket server port (default: 8555)
     int rtsp_port;                          // RTSP server port (default: 8554)
     char rtsp_stream_name[64];              // RTSP stream name (default: "stream")
     bool loop_video;                        // Whether to loop the video
-    int detection_frame_interval;           // Process every Nth frame (default: 5)
     double video_duration_sec;              // Video duration in seconds (auto-detected)
     double video_fps;                       // Video FPS (auto-detected)
     int video_width;                        // Video width (auto-detected)
@@ -37,7 +36,7 @@ typedef struct
                               // single x264 encoder, app preview only (default true)
     char orin_host[64];       // Orin IP for RTP/H.265+SEI (default "10.42.0.2")
     int  orin_rtp_port;       // Orin UDP port (default 5600)
-    char camera_source[16];   // "camera" (libcamera) or "test" (videotestsrc) — validation
+    char camera_source[16];   // "test" -> videotestsrc; anything else -> libcamera. Not validated.
     int  app_preview_width;   // app H.264 preview width  (0 = same as capture, 1920)
     int  app_preview_height;  // app H.264 preview height (0 = same as capture, 1080)
     int  app_preview_fps;     // app H.264 preview fps    (0 = same as capture, 30)
@@ -47,8 +46,8 @@ typedef struct
 
 /**
  * @brief   Returns true if path is a named pipe (FIFO) rather than a regular file.
- * @details Used to skip ffprobe and choose the correct FFmpeg input flags for
- *          live camera streams piped from picamera2's hardware H.264 encoder.
+ * @details Callers branch on this: a FIFO means the live camera path (skip
+ *          ffprobe, use the raw-H.264 FFmpeg input flags) rather than a file.
  */
 bool config_is_fifo(const char *path);
 

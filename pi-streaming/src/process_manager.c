@@ -151,23 +151,20 @@ int pm_start_ffmpeg(ProcessManager *pm, const StreamingConfig *config)
         // Choose FFmpeg command based on input source type.
         if (config_is_fifo(config->video_path))
         {
-            /* Live camera: picamera2 hardware encoder writes raw H.264 Annex-B to the
-             * FIFO at real-time rate.  FFmpeg just remuxes into RTSP — no re-encode,
-             * so CPU usage is minimal and latency is as low as possible.
-             * repeat=true in picamera2 ensures SPS/PPS precedes every IDR frame,
-             * so late-joining Android clients never see a green screen.
+            /* Live camera: the frame sender's x264enc writes raw H.264 Annex-B
+             * into the FIFO at real time. FFmpeg only remuxes into RTSP — no
+             * re-encode, so CPU is minimal and latency is as low as it gets.
+             * h264parse config-interval=1 on the sender side repeats SPS/PPS
+             * before every IDR, so late-joining clients never see a green screen.
              *
-             * -fflags +nobuffer keeps output latency low (no read-ahead before
-             * forwarding frames).  probesize/analyzeduration are NOT set tiny:
-             * raw H.264 carries no container header, so FFmpeg must read until it
-             * sees an SPS to learn the frame size.  With -probesize 32 /
-             * -analyzeduration 0 it frequently gave up first ("Could not find
+             * probesize/analyzeduration must NOT be tiny. Raw H.264 has no
+             * container header, so FFmpeg reads until it sees an SPS to learn the
+             * frame size; with tiny values it gives up first ("Could not find
              * codec parameters ... unspecified size" → "Output file #0 does not
-             * contain any stream") and exited, which on reconnect cascaded into a
-             * dead stream.  These are upper bounds (FFmpeg stops as soon as it has
-             * the info), so they add no steady-state latency; 1 MB / 1 s is ample
-             * to capture the first SPS+IDR (SPS/PPS repeat before every IDR).
-             * Build the video framerate string from config */
+             * contain any stream") and exits, which cascades into a dead stream on
+             * reconnect. They are upper bounds — FFmpeg stops as soon as it has
+             * the info — so they cost no steady-state latency.
+             * -fflags +nobuffer keeps output latency low. */
             char fps_str[16];
             snprintf(fps_str, sizeof(fps_str), "%.0f", config->video_fps > 0 ? config->video_fps : 30.0);
 
@@ -178,7 +175,7 @@ int pm_start_ffmpeg(ProcessManager *pm, const StreamingConfig *config)
                   "-use_wallclock_as_timestamps", "1",   // Stamp each packet with real wall-clock
                   "-r", fps_str,                         // Input frame rate (helps demuxer timing)
                   "-f", "h264",                          // Raw H.264 elementary stream
-                  "-i", config->video_path,              // Named pipe written by picamera2
+                  "-i", config->video_path,              // FIFO written by the sender's H.264 branch
                   "-c:v", "copy",                        // Remux only — no re-encode
                   "-an",
                   "-f", "rtsp",

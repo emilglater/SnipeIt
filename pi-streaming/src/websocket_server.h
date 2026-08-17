@@ -4,7 +4,9 @@
     This module implements a WebSocket server for the Android app:
     - Listens for WebSocket connections on a configurable port
     - Notifies when clients connect/disconnect
-    - Sends JSON detection data to connected clients
+    - Sends JSON to the client: sensor_data, target_detection, acoustic events,
+      stream_ready
+    - Receives command frames from the app (dispatched via on_command)
  */
 
 #ifndef WEBSOCKET_SERVER_H
@@ -79,11 +81,15 @@ void ws_set_callbacks(WebSocketServer *ws,
 void ws_set_command_callback(WebSocketServer *ws, ws_command_callback on_command);
 
 /**
- * @brief   Service the WebSocket server (non-blocking).
- * @details Must be called regularly to handle events.
+ * @brief   Run one libwebsockets service pass. BLOCKS.
+ * @details libwebsockets >= 3.2 IGNORES timeout_ms and blocks inside poll() on
+ *          its own internal timeout (~30 s on an idle link). The caller must
+ *          have another thread calling lws_cancel_service() to bound this - see
+ *          the waker thread in main.c. Do not assume this returns promptly, and
+ *          do not remove the waker.
  * @param   ws A pointer to WebSocketServer structure.
- * @param   timeout_ms Timeout in milliseconds (0 for non-blocking).
- * @returns 0 on success, -1 on error.
+ * @param   timeout_ms Passed to lws_service(); currently ignored by lws.
+ * @returns 0 on success, -1 if the server is not running.
  */
 int ws_service(WebSocketServer *ws, int timeout_ms);
 
@@ -111,14 +117,6 @@ int ws_send(WebSocketServer *ws, const char *message);
  * @returns 0 on success, -1 on error.
  */
 int ws_send_json(WebSocketServer *ws, const char *json, size_t len);
-
-/**
- * @brief   Get the libwebsockets context file descriptor for poll().
- * @details This can be used to integrate with poll()-based event loops.
- * @param   ws A pointer to WebSocketServer structure.
- * @returns File descriptor, or -1 if not available.
- */
-int ws_get_poll_fd(WebSocketServer *ws);
 
 /**
  * @brief   Cleanup and shutdown the WebSocket server.

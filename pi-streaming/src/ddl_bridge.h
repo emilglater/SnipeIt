@@ -9,15 +9,16 @@ typedef struct DdlBridge DdlBridge;
 
 /**
  * @brief Start the sensor pipeline and bridge it to the WebSocket server.
- * @details Runs the same boot sequence as src/main.c (log/hal/event_bus/app
- *          init + scheduler start), but does NOT block on app_join().
- *          After this returns, the DDL active objects run on their own threads
- *          and the broadcaster module refreshes the snapshot frame every ~2s.
+ * @details Runs the DDL boot sequence (log/hal/event_bus/app init + scheduler
+ *          start) without blocking on app_join(). After this returns, the DDL
+ *          active objects run on their own threads and the broadcaster
+ *          refreshes the snapshot frame every ~2 s.
  *
  * @param ws        Already-initialised WebSocket server. The bridge does not
  *                  take ownership; the caller still owns it.
  * @param period_ms Minimum interval between sensor_data emissions.
- *                  Suggested: 2000 (matches the scheduler cycle).
+ *                  The underlying snapshot only refreshes every ~2 s, so
+ *                  values below 2000 will repeat data.
  * @return Opaque bridge handle on success, NULL on failure (the bridge
  *         has fully cleaned up after itself on failure).
  */
@@ -51,8 +52,7 @@ void ddl_bridge_pump_detections(DdlBridge* b);
 
 /**
  * @brief Record the capture-time servo pose for an outgoing frame_id.
- * @details Integration hook for the Pi->Orin frame sender (protocol work
- *          item 1). The sender calls this once per emitted frame, at the
+ * @details The frame sender calls this once per emitted frame, at the
  *          instant of capture; the bridge reads the current servo pose and
  *          stores it in the frame_id->pose ring so a returning detection can
  *          be joined back to the pose the camera held when the frame was

@@ -6,7 +6,6 @@
     "rtsp_port": 8554,
     "rtsp_stream_name": "stream",
     "loop_video": false,
-    "detection_frame_interval": 20,
     "camera_source": "camera",
     "orin_enabled": true,
     "orin_host": "10.42.0.2",

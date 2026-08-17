@@ -27,9 +27,9 @@
 #include "orin_receiver.h"
 #include "tracker.h"
 
-/* PULL-bind endpoint for detections returning from the Orin. The Orin
- * PUSH-connects to this over the direct GigE link. Compile-time for now;
- * promote to streaming_config.json if it needs to vary per deployment. */
+/* PULL-bind endpoint for detections returning from the Orin, which
+ * PUSH-connects to it over the direct GigE link. Compile-time: that link is
+ * fixed, so this does not vary per deployment. */
 #define ORIN_DETECTION_ZMQ_ENDPOINT "tcp://0.0.0.0:5556"
 
 /* Depth of the detection->app forward queue (receiver thread -> main loop). */
@@ -139,7 +139,8 @@ static int select_detection_index(const OrinDetectionMsg* msg,
 
 /* Serialise a parsed Orin detection message into the EXACT "target_detection"
  * schema the app already consumes (compact, bbox in 1920x1080) — the same wire
- * shape the retired Python detector produced, so the app contract is unchanged.
+ * shape the retired Python detector produced. The base schema is unchanged;
+ * one OPTIONAL field is added (see below).
  *
  * When @ids is non-NULL the "id" field carries the STABLE track id ids[i]
  * (instead of the Orin's per-frame index), and an OPTIONAL non-breaking
@@ -705,8 +706,8 @@ void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
             return;
 
         /* Clamp to the servo's mechanical pan/tilt range so set_target
-         * isn't rejected at the extremes (the app already clamps, but
-         * defense in depth costs nothing). */
+         * isn't rejected at the extremes (the app clamps too; this is the
+         * backstop). */
         if (h < SERVO_HORIZONTAL_MIN_ANGLE_DEG) h = SERVO_HORIZONTAL_MIN_ANGLE_DEG;
         if (h > SERVO_HORIZONTAL_MAX_ANGLE_DEG) h = SERVO_HORIZONTAL_MAX_ANGLE_DEG;
         if (v < SERVO_VERTICAL_MIN_ANGLE_DEG)   v = SERVO_VERTICAL_MIN_ANGLE_DEG;
@@ -770,7 +771,8 @@ void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
 }
 
 /* Periodic one-line pipeline health report (rates over the last period).
- * cap = frames pose-stamped/s (== capture+encode fps), orin = detection
+ * cap = frames reaching the Orin encoder per second (post-drop, so below raw
+ * capture fps when the encoder is behind), orin = detection
  * msgs/s back from the Orin, miss = pose-join misses, slew_skip = msgs
  * gated by the settling window, aim = servo follow updates pushed. */
 static void bridge_stats_tick(DdlBridge* b)
@@ -841,7 +843,8 @@ void ddl_bridge_pump_detections(DdlBridge* b)
         pthread_mutex_unlock(&b->det_mtx);
 
         (void)ws_send_json(b->ws, line, len);
-        // Show the detection JSON on the console for debugging, but don't spam it.
+        /* Unconditional: every forwarded detection is printed, at the Orin's
+         * full message rate. Gate or drop this before shipping. */
         printf("[BRIDGE] Forwarded detection JSON: %s\n\n", line);
     }
 }
@@ -853,10 +856,10 @@ void ddl_bridge_record_capture_pose(DdlBridge* b, uint32_t frame_id)
         return;
     }
 
-    /* Live commanded angles, NOT the broadcaster snapshot: the snapshot is
-     * refreshed once per 2 s scheduler cycle, so after a scan step it kept
-     * stamping frames with the pre-step pose -> ~10-deg bearing errors ->
-     * full track churn on every step. */
+    /* Live commanded angles, NOT the broadcaster snapshot. The snapshot only
+     * refreshes once per 2 s scheduler cycle, so it stamps frames with the
+     * pre-step pose after a scan step — ~10-deg bearing error, full track
+     * churn. The snapshot is the fallback only. */
     float pan, tilt;
     if (ddl_servo_get_pose(&pan, &tilt) != eSTATUS_SUCCESSFUL)
     {

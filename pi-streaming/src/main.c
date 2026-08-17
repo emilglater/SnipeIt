@@ -1,40 +1,37 @@
 /*
     Pi Streaming Server - Main Orchestrator
 
-    This program coordinates all components:
-    - mediaMTX (RTSP server)
-    - FFmpeg (video streaming)
-    - WebSocket server (Android communication)
-    - Unix socket IPC (Python detection communication)
+    Owns the camera and coordinates:
+    - frame sender      camera -> H.265+SEI over RTP to the Orin, plus an H.264
+                        preview written into a FIFO
+    - FFmpeg            reads that FIFO and remuxes it to RTSP
+    - mediaMTX          the RTSP server the Android app pulls from
+    - WebSocket server  app commands in; sensor, detection and acoustic JSON out
+    - DDL bridge        sensors, servos, and the ZeroMQ socket that receives
+                        detections back from the Orin
 
     Flow:
-    1. Load configuration
-    2. Start mediaMTX
-    3. Initialize WebSocket server
-    4. Initialize Unix socket IPC
-    5. Wait for Python detection script to connect
-    6. Wait for Android app to connect (WebSocket)
-    7. On Android connect: Start FFmpeg, send START to Python
-    8. Forward detection data from Python to Android
-    9. On Android disconnect: Stop FFmpeg, send STOP to Python
-    10. Loop back to step 6
+    1. Load and validate configuration
+    2. Start mediaMTX and wait for it to listen
+    3. Initialise the WebSocket server and the DDL bridge
+    4. Start the lws waker thread (see INVARIANT below)
+    5. Start the camera pipeline ONCE and keep it up for the whole session
+    6. Loop: emit sensor_data, forward Orin detections, service libwebsockets
 
-    --------------------------------------------------------------------------
-    TIMING FIX (the reason this file changed):
+    The app connecting or disconnecting does NOT start or stop the camera
+    pipeline. Connecting only sends stream_ready.
 
-    libwebsockets >= 3.2 IGNORES the timeout argument to lws_service().  The call
-    blocks inside poll() until a socket event happens, using lws's own internal
-    timeout (which can be ~30 s on an idle link).  Because the main loop is the
-    only thing servicing lws, that made the ENTIRE loop -- IPC reads, the sensor
-    bridge, everything -- stall until the Android app happened to send a packet.
-    That is why sensor data arrived in ragged 10-20 s bursts instead of every 1 s.
+    INVARIANT - do not remove the waker thread:
+    libwebsockets >= 3.2 ignores the timeout argument to lws_service() and
+    blocks in poll() on its own internal timeout, which can be ~30 s on an idle
+    link. The main loop is the only thing servicing lws, so without an outside
+    kick the whole loop -- sensors, detections, acoustic -- stalls until the app
+    happens to send a packet. The waker thread calls lws_cancel_service() every
+    LWS_WAKER_INTERVAL_MS; that is the only lws call documented as safe from a
+    non-service thread. It is what paces the loop at ~50 Hz.
 
-    The fix: a dedicated "waker" thread calls lws_cancel_service() every 20 ms.
-    That is the ONLY lws function documented as safe to call from another thread;
-    it writes a byte into lws's internal event pipe, forcing the poll() inside
-    lws_service() to return.  The main loop therefore wakes and runs a full
-    iteration at ~50 Hz, completely independent of WebSocket traffic.
-    --------------------------------------------------------------------------
+    History: a local Python + Coral EdgeTPU detector used to own the camera and
+    talk to this server over a Unix socket. Retired; see legacy/edgetpu/.
  */
 
 #include <stdio.h>
@@ -61,10 +58,8 @@
 #define DDL_BRIDGE_INTERVAL_MS 1000
 #define LWS_WAKER_INTERVAL_MS  20   /* kick the lws poll this often -> loop runs at ~50 Hz */
 
-// Global state for signal handler
 static volatile bool g_running = true;
 
-// Application state
 typedef struct
 {
     StreamingConfig config;
@@ -77,9 +72,10 @@ typedef struct
     FrameSender* sender;   // Orin H.265+SEI sender + H.264 app-preview (camera owner)
 } AppState;
 
-/* Fired by the frame sender on the capture thread when a frame is assigned a
- * frame_id (before encode). Record the capture-time servo pose so a returning
- * Orin detection can be joined back to where the camera was pointing. */
+/* Fired by the frame sender, on the Orin branch's streaming thread, when a
+ * frame is assigned a frame_id (just before encode). Always the same single
+ * thread - ddl_bridge relies on that. Records the capture-time servo pose so a
+ * returning Orin detection can be joined back to where the camera was pointing. */
 static void on_sender_frame_captured(uint32_t frame_id, void *user)
 {
     ddl_bridge_record_capture_pose((DdlBridge *)user, frame_id);
@@ -101,7 +97,6 @@ static void *lws_waker(void *arg)
     return NULL;
 }
 
-// Signal handler for clean shutdown
 static void signal_handler(int sig)
 {
     (void)sig;
@@ -123,27 +118,11 @@ static void send_stream_ready(AppState *app)
            app->config.rtsp_port, app->config.rtsp_stream_name);
 }
 
-/* Bring up the live camera pipeline (FFmpeg + picamera2) and VERIFY FFmpeg is
- * actually publishing to mediaMTX before returning success.
- *
- * This is started ONCE at program start-up and then kept running for the whole
- * session -- it is deliberately NOT tied to Android connect/disconnect.  Doing
- * the start/stop per connection was the root of the intermittent black screens:
- * FFmpeg probing a freshly-(re)started raw-H.264 FIFO is not reliable, and a
- * blind "sleep then assume success" sent stream_ready even when FFmpeg had died
- * on the probe ("Output file #0 does not contain any stream").
- *
- * Reliability comes from (a) a fresh FIFO inode (clean SPS-led stream, no stale
- * writer/data), and (b) a verify-and-retry loop: start FFmpeg, let the camera
- * come up, then confirm FFmpeg is still alive (= it caught an SPS and is
- * publishing).  If it died, restart it against the now-warm camera (which emits
- * an SPS every ~1 s) and try again.  Returns true only once FFmpeg is confirmed
- * publishing.
- * Build and start the Orin frame sender: it OWNS the camera and fans the 1080p
+/* Build and start the Orin frame sender: it OWNS the camera and fans the 1080p
  * capture out two ways — H.265+SEI over RTP to the Orin, and a software H.264
  * "app preview" written into the FIFO the app's FFmpeg reads. It also records
  * the capture-time servo pose per frame (on_sender_frame_captured) so returning
- * Orin detections join back to the right pose. Replaces person_streamer.py. */
+ * Orin detections join back to the right pose. */
 static bool start_frame_sender(AppState *app)
 {
     if (app->sender != NULL)
@@ -157,10 +136,9 @@ static bool start_frame_sender(AppState *app)
     cfg.width             = 1920;
     cfg.height            = 1080;
     cfg.fps               = 30;
-    /* Keep 2 of the 4 cores free: x265 at superfast on all cores pinned the
-     * CPU at 0% idle, starving hostapd/mediaMTX/net softirq — the app's video
-     * froze even though the local FIFO->FFmpeg path kept 30 fps. ultrafast on
-     * a 2-core pool costs little Orin fps and leaves the system responsive. */
+    /* x265 must not use all 4 cores: at 0% idle it starves hostapd/mediaMTX/net
+     * softirq and the app's video freezes even while the FIFO keeps 30 fps.
+     * ultrafast on a 2-core pool costs little Orin fps. Pinned via pools=2 below. */
     cfg.speed_preset      = "ultrafast";
     /* Deterministic 12-frame closed GOP: the Orin can only start (or recover)
      * decoding at a keyframe, so the cadence must be pinned — scenecut off,
@@ -236,10 +214,10 @@ static bool ffmpeg_reports_publishing(void)
 /* Bring up the live camera pipeline (FFmpeg reading the FIFO + the frame sender
  * writing it) and VERIFY FFmpeg is actually publishing to mediaMTX before
  * returning. Started ONCE at start-up and kept running for the whole session
- * (not tied to Android connect/disconnect) — same reliability rationale as the
- * old picamera2 path: a fresh FIFO inode + a verify-and-retry loop. On a probe
- * failure we fully restart BOTH ends (FFmpeg + sender) against a fresh FIFO so
- * there is never a half-open FIFO (a dead reader would SIGPIPE the sender). */
+ * (not tied to Android connect/disconnect). Reliability comes from a fresh FIFO
+ * inode plus a verify-and-retry loop. On a probe failure we fully restart BOTH
+ * ends (FFmpeg + sender) against a fresh FIFO so there is never a half-open FIFO
+ * (a dead reader would SIGPIPE the sender). */
 static bool start_camera_stream(AppState *app)
 {
     if (app->streaming_active)
@@ -312,7 +290,6 @@ static bool start_camera_stream(AppState *app)
     return false;
 }
 
-// Callback when Android connects via WebSocket
 static void on_android_connect(void *user_data)
 {
     AppState *app = (AppState *)user_data;
@@ -338,7 +315,6 @@ static void on_android_command(const char *payload, size_t len, void *user_data)
     ddl_bridge_handle_command(app->bridge, payload, len);
 }
 
-// Callback when Android disconnects
 static void on_android_disconnect(void *user_data)
 {
     AppState *app = (AppState *)user_data;
@@ -346,9 +322,9 @@ static void on_android_disconnect(void *user_data)
     printf("[MAIN] Android client disconnected\n");
     app->android_connected = false;
 
-    /* The live camera pipeline keeps running so the stream stays up and the next
-     * connection is instant (avoiding the FFmpeg/camera restart races that caused
-     * black screens). Detections come from the Orin regardless of app presence. */
+    /* Deliberately empty. The camera pipeline stays up so the next connect is
+     * instant — restarting FFmpeg and the camera per connection races and
+     * black-screens. Detections keep flowing from the Orin either way. */
 }
 
 static void print_usage(const char *program)
@@ -366,8 +342,8 @@ static void print_usage(const char *program)
 
 int main(int argc, char *argv[])
 {
-    setvbuf(stdout, NULL, _IONBF, 0);  // Unbuffered stdout for real-time logs
-    setvbuf(stderr, NULL, _IONBF, 0);  // Unbuffered stderr for real-time error logs
+    setvbuf(stdout, NULL, _IONBF, 0);   /* unbuffered: real-time logs */
+    setvbuf(stderr, NULL, _IONBF, 0);
     fprintf(stderr, "[BUILD] compiled %s %s\n", __DATE__, __TIME__);
 
     /* Initialize GStreamer for the Orin frame sender (camera -> H.265+SEI -> Orin,
@@ -376,7 +352,6 @@ int main(int argc, char *argv[])
 
     const char *config_path = DEFAULT_CONFIG_PATH;
 
-    // Parse command line arguments
     if (argc > 2)
     {
         print_usage(argv[0]);
@@ -397,7 +372,6 @@ int main(int argc, char *argv[])
     printf("  Pi Streaming Server\n");
     printf("==========================================\n\n");
 
-    // Initialize application state
     AppState app = {
         .android_connected = false,
         .streaming_active = false
@@ -406,9 +380,7 @@ int main(int argc, char *argv[])
     // Set up signal handlers for clean shutdown
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    // Note: SIGCHLD handler set after config_probe_video() to allow pclose() to work
 
-    // Load configuration
     printf("[MAIN] Loading configuration from %s\n", config_path);
     if (config_load(&app.config, config_path) != 0)
     {
@@ -416,14 +388,12 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Probe video file
     if (config_probe_video(&app.config) != 0)
     {
         fprintf(stderr, "[MAIN] Failed to probe video file\n");
         return 1;
     }
 
-    // Validate configuration
     if (config_validate(&app.config) != 0)
     {
         fprintf(stderr, "[MAIN] Configuration validation failed\n");
@@ -436,10 +406,8 @@ int main(int argc, char *argv[])
      * (mediaMTX, FFmpeg). This must be after config_probe_video() which uses pclose(). */
     signal(SIGCHLD, SIG_IGN);
 
-    // Initialize process manager
     pm_init(&app.pm);
 
-    // Start mediaMTX
     printf("[MAIN] Starting mediaMTX...\n");
     if (pm_start_mediamtx(&app.pm, &app.config) != 0)
     {
@@ -447,7 +415,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Wait for mediaMTX to be ready
     if (pm_wait_for_mediamtx_ready(&app.config, 10) != 0)
     {
         fprintf(stderr, "[MAIN] mediaMTX not ready\n");
@@ -455,7 +422,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Initialize WebSocket server
     printf("[MAIN] Initializing WebSocket server on port %d...\n", app.config.websocket_port);
     if (ws_init(&app.ws, app.config.websocket_port) != 0)
     {
@@ -477,9 +443,9 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Start the waker thread now that the lws context exists.  THIS is what keeps
-     * the main loop running at ~50 Hz regardless of WebSocket traffic (see the
-     * big comment at the top of the file for the full explanation). */
+    /* Start the waker thread now that the lws context exists. This is what
+     * keeps the main loop running at ~50 Hz regardless of WebSocket traffic
+     * (see the INVARIANT note at the top of this file). */
     pthread_t waker_tid;
     if (pthread_create(&waker_tid, NULL, lws_waker, app.ws.context) != 0)
     {
@@ -499,9 +465,6 @@ int main(int argc, char *argv[])
                         "continuing without acoustic localization\n");
         // intentionally NOT returning 1 -- rest of system must run
     }
-
-    /* Detection comes from the Orin over ZeroMQ (handled in the DDL bridge) — the
-     * local Python detector + its Unix-socket IPC are retired (see legacy/edgetpu). */
 
     /* Bring the live camera pipeline up NOW and keep it running for the whole
      * session, independent of Android connect/disconnect. The frame sender owns
@@ -530,9 +493,8 @@ int main(int argc, char *argv[])
      * the loop is no longer gated on the Android app sending packets. */
     while (g_running)
     {
-        /* ITER-DIAG: stays SILENT on a healthy run.  With the waker, every
-         * iteration is ~20 ms, so we only log if one takes longer than 200 ms,
-         * i.e. a real stall.  No [ITER-DIAG] output == the fix is working. */
+        /* ITER-DIAG: silent on a healthy run. Iterations are ~20 ms; anything
+         * over 200 ms is a real stall and gets logged. */
         /* Main loop only; no synchronisation needed. */
         /* cppcheck-suppress threadsafety-threadsafety */
         static struct timespec prev_iter = {0, 0};
