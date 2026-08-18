@@ -25,9 +25,27 @@ struct lws_context;
 // Message queue settings
 #define WS_QUEUE_SIZE 256  // Number of messages in queue (ring buffer)
 
-// Callback function types
+/**
+ * @brief Invoked when a client connects.
+ * @param   user_data The pointer passed to ws_set_callbacks().
+ */
 typedef void (*ws_connect_callback)(void *user_data);
+
+/**
+ * @brief Invoked when a client disconnects.
+ * @param   user_data The pointer passed to ws_set_callbacks().
+ */
 typedef void (*ws_disconnect_callback)(void *user_data);
+
+/**
+ * @brief Invoked for each inbound command frame.
+ * @details Called on the main thread from inside ws_service().
+ * @param   payload The raw libwebsockets receive buffer. NOT NUL-terminated
+ *                  and NOT owned; valid only for the duration of the call.
+ *                  Use @p len to bound it.
+ * @param   len Payload length in bytes. Always > 0.
+ * @param   user_data The pointer passed to ws_set_callbacks().
+ */
 typedef void (*ws_command_callback)(const char *payload, size_t len, void *user_data);
 // Single queued message
 typedef struct
@@ -78,6 +96,13 @@ void ws_set_callbacks(WebSocketServer *ws,
                       ws_disconnect_callback on_disconnect,
                       void *user_data);
 
+/**
+ * @brief   Set the inbound command callback.
+ * @details Invoked from ws_service() on the main thread for each command
+ *          message received from a client. Pass NULL to clear.
+ * @param   ws A pointer to WebSocketServer structure.
+ * @param   on_command Callback for inbound command payloads (can be NULL).
+ */
 void ws_set_command_callback(WebSocketServer *ws, ws_command_callback on_command);
 
 /**

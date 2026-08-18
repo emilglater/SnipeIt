@@ -100,32 +100,43 @@ typedef struct
 } FrameSenderConfig;
 
 /**
- * frame_sender_config_default - Fill cfg with LIBRARY defaults (1080p capture
- * capped at 30 fps, zerolatency/no-B, libcamera source, RTP/UDP sink).
+ * @brief Fill cfg with LIBRARY defaults: 1080p capture capped at 30 fps,
+ *        zerolatency/no-B, libcamera source, RTP/UDP sink.
  *
- * These are starting values, not the running configuration: the service in
- * src/main.c overrides speed_preset, key_int_max and x265_extra. The 30 fps is
- * the CAPTURE cap; the software x265 encode delivers ~2.4-3.4 fps to the Orin
- * on this Pi.
+ * @param cfg Configuration to populate.
+ *
+ * @details These are starting values, not the running configuration: the
+ *          service in src/main.c overrides speed_preset, key_int_max and
+ *          x265_extra. The 30 fps is the CAPTURE cap; the software x265 encode
+ *          delivers ~2.4-3.4 fps to the Orin on this Pi.
  */
 void frame_sender_config_default(FrameSenderConfig *cfg);
 
 /**
- * frame_sender_start - Build and start the pipeline.
- * @cfg: read during this call only; nothing is retained, so the strings need
- *       not outlive the call.
- * Returns a handle, or NULL on failure (logged). gst_init() must have been
- * called by the process beforehand.
+ * @brief Build and start the pipeline.
+ *
+ * @param cfg Read during this call only; nothing is retained, so the strings
+ *            need not outlive the call.
+ *
+ * @details gst_init() must have been called by the process beforehand.
+ *
+ * @returns A handle, or NULL on failure (logged).
  */
 FrameSender *frame_sender_start(const FrameSenderConfig *cfg);
 
 /**
- * frame_sender_stop - Stop the pipeline and free the sender. NULL-safe.
+ * @brief Stop the pipeline and free the sender.
+ *
+ * @param s The sender. May be NULL (no-op).
  */
 void frame_sender_stop(FrameSender *s);
 
 /**
- * frame_sender_frame_count - Total frames captured since start (diagnostic).
+ * @brief Total frames captured since start (diagnostic).
+ *
+ * @param s The sender.
+ *
+ * @returns The running total of captured frames.
  */
 unsigned long frame_sender_frame_count(const FrameSender *s);
 

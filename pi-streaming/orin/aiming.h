@@ -65,27 +65,35 @@ typedef struct
 } AimSolution;
 
 /**
- * aim_config_default - Fill cfg with the project defaults.
+ * @brief Fill cfg with the project defaults.
  *
- * FOV defaults are MEASURED on this rig (IMX477 + 16 mm; see aiming.c for the
- * date and the arithmetic). Frame defaults to 1920x1080. Servo limits come from
- * the SERVO_*_{MIN,MAX}_ANGLE_DEG values. Both signs are verified against the
- * rig; re-verify with a manual jog whenever a servo axis is remounted.
+ * @param cfg Configuration to populate. May be NULL (no-op).
+ *
+ * @details FOV defaults are MEASURED on this rig (IMX477 + 16 mm; see aiming.c
+ *          for the date and the arithmetic). Frame defaults to 1920x1080.
+ *          Servo limits come from the SERVO_*_{MIN,MAX}_ANGLE_DEG values. Both
+ *          signs are verified against the rig; re-verify with a manual jog
+ *          whenever a servo axis is remounted.
  */
 void aim_config_default(AimConfig *cfg);
 
 /**
- * aim_compute - Bounding box + capture pose -> absolute servo command.
+ * @brief Bounding box + capture pose -> absolute servo command.
  *
- * @cfg:              Optics / frame / limits configuration.
- * @bbox_x,_y,_w,_h:  Box in the cfg->frame_w x cfg->frame_h pixel space
- *                    (top-left origin, +x right, +y down). Width/height > 0.
- * @capture_pan_deg:  Servo pan at the instant the frame was captured.
- * @capture_tilt_deg: Servo tilt at capture.
- * @out:              Filled on success.
+ * @param cfg              Optics / frame / limits configuration.
+ * @param bbox_x           Box left edge, in the cfg->frame_w x cfg->frame_h
+ *                         pixel space (top-left origin, +x right, +y down).
+ * @param bbox_y           Box top edge, same space.
+ * @param bbox_w           Box width in pixels (> 0).
+ * @param bbox_h           Box height in pixels (> 0).
+ * @param capture_pan_deg  Servo pan at the instant the frame was captured.
+ * @param capture_tilt_deg Servo tilt at capture.
+ * @param out              Filled on success.
  *
- * Returns false on bad arguments (NULL, non-positive frame/box dims), true
- * otherwise. A clamped solution still returns true with out->clamped set.
+ * @details A clamped solution still returns true, with out->clamped set.
+ *
+ * @returns false on bad arguments (NULL, non-positive frame/box dims), true
+ *          otherwise.
  */
 bool aim_compute(const AimConfig *cfg,
                  int bbox_x, int bbox_y, int bbox_w, int bbox_h,
@@ -93,18 +101,19 @@ bool aim_compute(const AimConfig *cfg,
                  AimSolution *out);
 
 /**
- * aim_estimate_distance_m - Range from box height and known target height.
+ * @brief Range from box height and known target height.
  *
- * Uses the same rectilinear model:
- *   D = (target_height_m * frame_h) / (2 * bbox_h * tan(VFOV/2))
- * Distance is NOT a detector output; it is computed here from geometry, so it
- * is only as good as target_height_m and the VFOV calibration.
+ * @param cfg             Configuration (uses vfov_deg and frame_h).
+ * @param bbox_h          Box height in pixels (> 0).
+ * @param target_height_m Known real-world target height in metres (> 0).
  *
- * @cfg:                Configuration (uses vfov_deg and frame_h).
- * @bbox_h:             Box height in pixels (> 0).
- * @target_height_m:    Known real-world target height in metres (> 0).
+ * @details Uses the same rectilinear model:
+ *          D = (target_height_m * frame_h) / (2 * bbox_h * tan(VFOV/2))
+ *          Distance is NOT a detector output; it is computed here from
+ *          geometry, so it is only as good as target_height_m and the VFOV
+ *          calibration.
  *
- * Returns the distance in metres, or -1.0f on bad arguments.
+ * @returns The distance in metres, or -1.0f on bad arguments.
  */
 float aim_estimate_distance_m(const AimConfig *cfg, int bbox_h,
                               float target_height_m);

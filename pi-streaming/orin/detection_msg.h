@@ -69,18 +69,21 @@ typedef struct
 } OrinDetectionMsg;
 
 /**
- * orin_detection_msg_parse - Parse one JSON detection line into *out.
+ * @brief Parse one JSON detection line into *out.
  *
- * @json: Pointer to the JSON text (need not be NUL-terminated).
- * @len:  Length of the JSON text in bytes.
- * @out:  Filled on success; zero-initialised by the function before parsing.
+ * @param json Pointer to the JSON text (need not be NUL-terminated).
+ * @param len  Length of the JSON text in bytes.
+ * @param out  Filled on success; zero-initialised by the function before
+ *             parsing.
  *
- * Returns true if the line parsed as a well-formed object. Unknown keys are
- * skipped. Detections beyond ORIN_MAX_DETECTIONS are dropped (the rest still
- * parse). A missing "detections" array yields num_detections == 0 and still
- * returns true. Returns false only on structurally broken JSON.
+ * @details Unknown keys are skipped. Detections beyond ORIN_MAX_DETECTIONS are
+ *          dropped (the rest still parse). A missing "detections" array yields
+ *          num_detections == 0 and still returns true.
  *
- * Pure function: no allocation, no globals, no I/O.
+ *          Pure function: no allocation, no globals, no I/O.
+ *
+ * @returns true if the line parsed as a well-formed object; false only on
+ *          structurally broken JSON.
  */
 bool orin_detection_msg_parse(const char *json, size_t len, OrinDetectionMsg *out);
 

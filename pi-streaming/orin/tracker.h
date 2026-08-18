@@ -39,35 +39,49 @@
 typedef struct Tracker Tracker;
 
 /**
- * tracker_create - Allocate a tracker.
- * @aim: aiming config used for the bbox->bearing geometry. BORROWED (not owned);
- *       must outlive the tracker. Reads FOV/frame/sign; never mutated.
- * Returns the tracker, or NULL on bad arg / alloc failure.
+ * @brief Allocate a tracker.
+ *
+ * @param aim Aiming config used for the bbox->bearing geometry. BORROWED (not
+ *            owned); must outlive the tracker. Reads FOV/frame/sign; never
+ *            mutated.
+ *
+ * @returns The tracker, or NULL on bad argument / allocation failure.
  */
 Tracker *tracker_create(const AimConfig *aim);
 
-/** tracker_destroy - Free the tracker. NULL-safe. */
+/**
+ * @brief Free the tracker.
+ *
+ * @param t The tracker. May be NULL (no-op).
+ */
 void tracker_destroy(Tracker *t);
 
 /**
- * tracker_update - Associate one frame's detections and assign stable ids.
+ * @brief Associate one frame's detections and assign stable ids.
  *
- * Call once per detection message, ONLY when the frame_id->pose join HIT (the
- * pose is required for the angular mapping).
+ * @param t             The tracker.
+ * @param msg           The parsed detection message for this frame.
+ * @param pose          The capture-time pose joined for msg->frame_id
+ *                      (non-NULL).
+ * @param out_ids       Filled with the stable track id for detections[i]
+ *                      (caller array, length >= msg->num_detections). Never 0
+ *                      on return for a valid detection.
+ * @param out_confirmed Filled with whether detections[i]'s track is confirmed
+ *                      (hits >= N_INIT) — safe to allow locking. Same length.
  *
- * @t:             The tracker.
- * @msg:           The parsed detection message for this frame.
- * @pose:          The capture-time pose joined for msg->frame_id (non-NULL).
- * @out_ids:       Filled with the stable track id for detections[i]
- *                 (caller array, length >= msg->num_detections). Never 0 on
- *                 return for a valid detection.
- * @out_confirmed: Filled with whether detections[i]'s track is confirmed
- *                 (hits >= N_INIT) — safe to allow locking. Same length.
+ * @details Call once per detection message, ONLY when the frame_id->pose join
+ *          HIT: the pose is required for the angular mapping.
  */
 void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *pose,
                     uint32_t *out_ids, bool *out_confirmed);
 
-/** tracker_active_count - Number of live tracks (diagnostic). */
+/**
+ * @brief Number of live tracks (diagnostic).
+ *
+ * @param t The tracker.
+ *
+ * @returns The count of tracks currently in use.
+ */
 int tracker_active_count(const Tracker *t);
 
 #endif /* ORIN_TRACKER_H */
