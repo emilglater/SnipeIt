@@ -110,8 +110,9 @@ int ring_buffer_snapshot(ring_buffer_t *rb, float *output, int num_frames)
 
     int ch = rb->num_channels;
 
-    /* Clamp to the amount of data actually available */
-    int available = MIN(rb->frames_written, rb->capacity);
+    /* Clamp to the amount of data actually available. The result is bounded by
+     * capacity, so narrowing back to int here is safe. */
+    int available = (int)MIN(rb->frames_written, (int64_t)rb->capacity);
     if (num_frames > available)
     {
         num_frames = available;
@@ -141,12 +142,12 @@ int ring_buffer_snapshot(ring_buffer_t *rb, float *output, int num_frames)
     return num_frames;
 }
 
-int ring_buffer_get_total_written(ring_buffer_t *rb)
+int64_t ring_buffer_get_total_written(ring_buffer_t *rb)
 {
     if (!rb) return 0;
 
     pthread_mutex_lock(&rb->mutex);
-    int total = rb->frames_written;
+    int64_t total = rb->frames_written;
     pthread_mutex_unlock(&rb->mutex);
 
     return total;

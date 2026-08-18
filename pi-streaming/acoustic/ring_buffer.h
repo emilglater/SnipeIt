@@ -26,7 +26,9 @@ typedef struct
     int          capacity;          /* Total frames the buffer can hold */
     int          num_channels;      /* Channels per frame */
     int          write_pos;         /* Next frame index to write to (0..capacity-1) */
-    int          frames_written;    /* Total frames written since creation (monotonic) */
+    int64_t      frames_written;    /* Total frames written since creation. Must stay
+                                       64-bit: a 32-bit counter wraps after ~12.4 h at
+                                       48 kHz, which drives snapshot() past its bounds. */
     pthread_mutex_t mutex;          /* Protects write_pos and frames_written */
 } ring_buffer_t;
 
@@ -85,6 +87,6 @@ int ring_buffer_snapshot(ring_buffer_t *rb, float *output, int num_frames);
  *
  * Thread-safe: reads under mutex.
  */
-int ring_buffer_get_total_written(ring_buffer_t *rb);
+int64_t ring_buffer_get_total_written(ring_buffer_t *rb);
 
 #endif /* RING_BUFFER_H */

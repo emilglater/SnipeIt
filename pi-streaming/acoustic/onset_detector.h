@@ -51,11 +51,17 @@ typedef struct
     /* Trigger state */
     float           threshold;              /* Ratio threshold for triggering */
     int             refractory_samples;     /* Minimum samples between triggers */
-    int             samples_since_trigger;  /* Counter since last trigger */
+    int64_t         samples_since_trigger;  /* Counter since last trigger */
     int             triggered;              /* Flag: 1 if currently in triggered state */
     int             warmup_samples;         /* Samples needed before allowing triggers */
-    int             total_samples;          /* Total samples processed since reset */
+    int64_t         total_samples;          /* Total samples processed since reset */
     float           min_energy_floor;       /* Minimum long-term energy to allow trigger */
+
+    /* samples_since_trigger and total_samples must stay 64-bit. Both advance once
+     * per sample and are only reset by a trigger (samples_since_trigger) or by
+     * reset() (total_samples), so 32-bit versions wrap after ~12.4 h at 48 kHz.
+     * Once negative, the refractory and warmup tests never pass again and the
+     * detector stops firing without any error. */
 
     /* Configuration */
     int             sample_rate;
