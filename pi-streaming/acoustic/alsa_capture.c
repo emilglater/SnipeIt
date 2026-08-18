@@ -70,9 +70,10 @@ static void downmix_to_mono(const float *multichannel, float *mono,
 /* ---------------------------------------------------------------------------
  * Internal: ALSA xrun recovery.
  *
- * An xrun occurs when the capture buffer overflows because the
- * application did not read data fast enough. We recover by calling
- * snd_pcm_prepare() to reset the stream.
+ * An xrun occurs when the capture buffer overflows because the application did
+ * not read data fast enough. We recover by calling snd_pcm_prepare() to reset
+ * the stream. Only -EPIPE and -ESTRPIPE are handled; any other error is
+ * returned to the caller unchanged.
  * ------------------------------------------------------------------------ */
 static int xrun_recovery(snd_pcm_t *handle, int err)
 {
@@ -114,7 +115,6 @@ static void *capture_thread_func(void *arg)
     int chunk = cap->chunk_frames;
     int ch    = cap->num_channels;
 
-    /* Allocate buffers for one chunk */
     int32_t *raw_buf   = (int32_t *)malloc(sizeof(int32_t) * chunk * ch);
     float   *float_buf = (float *)malloc(sizeof(float) * chunk * ch);
     float   *mono_buf  = (float *)malloc(sizeof(float) * chunk);
@@ -139,7 +139,9 @@ static void *capture_thread_func(void *arg)
 
         if (frames_read < 0)
         {
-            /* Handle xrun or other error */
+            /* frames_read is reused to carry the recovery status: 0 if the
+             * stream was reprepared, still negative if the error was not one
+             * xrun_recovery() handles. */
             frames_read = xrun_recovery(handle, frames_read);
             if (frames_read < 0)
             {
@@ -157,7 +159,6 @@ static void *capture_thread_func(void *arg)
         /* Convert int32 -> float */
         convert_s32_to_float(raw_buf, float_buf, frames_read, ch);
 
-        /* Write to ring buffer */
         if (cap->ring_buffer)
         {
             ring_buffer_write(cap->ring_buffer, float_buf, frames_read);
@@ -277,7 +278,6 @@ int alsa_capture_start(alsa_capture_t *cap)
     snd_pcm_hw_params_alloca(&hw_params);
     snd_pcm_hw_params_any(handle, hw_params);
 
-    /* Set interleaved access mode */
     err = snd_pcm_hw_params_set_access(handle, hw_params,
                                         SND_PCM_ACCESS_RW_INTERLEAVED);
     if (err < 0)
@@ -304,7 +304,6 @@ int alsa_capture_start(alsa_capture_t *cap)
         }
     }
 
-    /* Set number of channels */
     err = snd_pcm_hw_params_set_channels(handle, hw_params, (unsigned int)cap->num_channels);
     if (err < 0)
     {
@@ -315,7 +314,6 @@ int alsa_capture_start(alsa_capture_t *cap)
         return -1;
     }
 
-    /* Set sample rate */
     unsigned int rate = (unsigned int)cap->sample_rate;
     err = snd_pcm_hw_params_set_rate_near(handle, hw_params, &rate, 0);
     if (err < 0)

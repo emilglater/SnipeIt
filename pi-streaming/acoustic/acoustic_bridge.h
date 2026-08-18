@@ -7,7 +7,7 @@
  * thread, and emits "acoustic_event" JSON messages via the shared
  * WebSocketServer when events fire.
  *
- * Wire it into main.c next to ddl_bridge_start() / ddl_bridge_tick().
+ * Driven from the main loop in src/main.c, next to ddl_bridge_tick().
  */
 
 #ifndef ACOUSTIC_BRIDGE_H

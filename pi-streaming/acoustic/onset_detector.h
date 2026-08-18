@@ -52,7 +52,11 @@ typedef struct
     float           threshold;              /* Ratio threshold for triggering */
     int             refractory_samples;     /* Minimum samples between triggers */
     int64_t         samples_since_trigger;  /* Counter since last trigger */
-    int             triggered;              /* Flag: 1 if currently in triggered state */
+    int             triggered;              /* Latches to 1 on the first trigger and
+                                               stays set until reset(). Not a live
+                                               state flag -- refractory status is
+                                               samples_since_trigger vs
+                                               refractory_samples. */
     int             warmup_samples;         /* Samples needed before allowing triggers */
     int64_t         total_samples;          /* Total samples processed since reset */
     float           min_energy_floor;       /* Minimum long-term energy to allow trigger */
@@ -74,6 +78,12 @@ typedef struct
  * @cutoff_hz:      High-pass filter cutoff frequency (e.g., 300.0).
  * @threshold:      Short/long energy ratio to trigger (e.g., 10.0).
  * @refractory_ms:  Minimum milliseconds between triggers (e.g., 500).
+ *
+ * The two energy window lengths are NOT arguments: they come from
+ * SHORT_WINDOW_MS / LONG_WINDOW_MS at compile time. The detector also refuses
+ * to fire for the first 1.5 long-windows (0.75 s at the default 500 ms) while
+ * the long-term EMA settles, which looks like a broken detector if you test
+ * with a short recording.
  *
  * Returns a pointer to the new detector, or NULL on failure.
  */
@@ -107,7 +117,8 @@ void onset_detector_reset(onset_detector_t *det);
 
 /**
  * onset_detector_get_energy_ratio - Return the current short/long energy
- * ratio. Useful for debugging and visualization.
+ * ratio. Returns 0.0 when the long-term energy is below 1e-12, which is
+ * indistinguishable from a genuine ratio of zero.
  */
 float onset_detector_get_energy_ratio(const onset_detector_t *det);
 

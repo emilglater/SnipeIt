@@ -4,11 +4,10 @@
  * Generalized Cross-Correlation with Phase Transform (GCC-PHAT)
  * for Time Delay of Arrival (TDOA) estimation.
  *
- * This is the core signal processing algorithm used in the IEEE paper
- * (Abiri & Pourmohammad, 2020). GCC-PHAT computes the cross-correlation
- * between two microphone signals with a normalization (PHAT weighting)
- * that whitens the spectrum. This produces a very sharp correlation peak,
- * making it ideal for impulsive broadband signals like gunshots.
+ * GCC-PHAT computes the cross-correlation between two microphone signals with
+ * a normalization (PHAT weighting) that whitens the spectrum, which gives a
+ * sharp correlation peak. That suits short broadband sounds like gunshots.
+ * Method follows Abiri & Pourmohammad, 2020.
  *
  * The algorithm:
  *   1. Compute FFT of both signals.
@@ -27,16 +26,16 @@
 
 /**
  * Pre-allocated workspace for GCC-PHAT computation.
- * Creating FFTW plans is expensive, so we do it once at initialization
- * and reuse the plans and scratch buffers for every computation.
+ * We build the FFTW plans and buffers once and reuse them for every event.
  */
 typedef struct
 {
     int             fft_size;
     int             num_channels;
 
-    /* FFTW plans and buffers (one per channel for forward FFT,
-     * plus one for the inverse FFT of the cross-correlation) */
+    /* Two forward FFT slots (A and B) reused for each pair in turn, plus one
+     * inverse FFT for the cross-correlation. NOT per-channel -- a pair's
+     * buffers are overwritten by the next pair. */
     float          *time_buf_a;          /* Input buffer for signal A */
     float          *time_buf_b;          /* Input buffer for signal B */
     fftwf_complex  *freq_buf_a;          /* FFT output for signal A */
@@ -65,7 +64,8 @@ typedef struct
  * @num_channels: Number of microphones.
  *
  * Returns a pointer to the workspace, or NULL on failure.
- * FFTW plan creation is slow (~100 ms) so do this once at startup.
+ * Do this once at startup: the workspace holds the plans and scratch buffers,
+ * and gcc_phat_compute_pair() then allocates nothing.
  */
 gcc_phat_workspace_t *gcc_phat_create(int fft_size, int num_channels);
 
@@ -85,7 +85,8 @@ void gcc_phat_destroy(gcc_phat_workspace_t *ws);
  *
  * After this call:
  *   ws->tdoa_results[p] contains the TDOA in seconds for pair p.
- *   ws->peak_values[p]  contains the peak correlation magnitude for pair p.
+ *   ws->peak_values[p]  contains the peak correlation value for pair p.
+ *                       Signed, not an absolute magnitude.
  *
  * The TDOA sign convention:
  *   Positive TDOA means signal arrives at mic pair_indices[p][1] LATER
@@ -105,7 +106,8 @@ void gcc_phat_compute_all_pairs(gcc_phat_workspace_t *ws,
  * @num_frames:  Number of samples in each signal.
  * @sample_rate: Sample rate in Hz.
  * @tdoa_out:    Output: estimated TDOA in seconds.
- * @peak_out:    Output: peak correlation value (confidence indicator).
+ * @peak_out:    Output: peak correlation value, signed, normalised by fft_size
+ *               (confidence indicator).
  *
  * This is the low-level function; gcc_phat_compute_all_pairs calls it
  * internally for each pair.
@@ -122,7 +124,8 @@ void gcc_phat_compute_pair(gcc_phat_workspace_t *ws,
  * gcc_phat_get_pair_index - Given two mic indices (i, j), return the
  * pair index p such that ws->tdoa_results[p] is the TDOA for that pair.
  *
- * Assumes i < j. Returns -1 if not found.
+ * Order does not matter; the two indices are sorted internally.
+ * Returns -1 if the pair is not found.
  */
 int gcc_phat_get_pair_index(const gcc_phat_workspace_t *ws, int mic_i, int mic_j);
 

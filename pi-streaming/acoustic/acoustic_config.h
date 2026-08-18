@@ -1,12 +1,9 @@
 /**
  * acoustic_config.h
  *
- * Central configuration for the SnipeIt Acoustic Detection Module.
- * All tunable parameters are defined here so they can be adjusted
- * without modifying the algorithmic code.
- *
- * Author: SnipeIt Team
- * Date: May 2026
+ * Central configuration for the SnipeIt acoustic detection module.
+ * Tunables live here so they can be changed without touching the
+ * algorithm code.
  */
 
 #ifndef ACOUSTIC_CONFIG_H
@@ -19,15 +16,15 @@
  * Audio Capture Parameters
  * ---------------------------------------------------------------------------
  * SAMPLE_RATE: Must match the I2S clock configuration.
- *   48000 Hz is the native rate for INMP441 and provides sufficient
- *   time resolution for TDOA at our array dimensions.
+ *   48000 Hz is the native rate for the INMP441, and fine enough in time to
+ *   measure the delays across an array this size.
  *
  * NUM_CHANNELS: Number of microphones in the array.
  *   Start with 4 (2 I2S buses x 2 channels). Can be increased to 6
  *   by adding a third I2S bus.
  *
- * SAMPLE_FORMAT: 32-bit signed integer. INMP441 outputs 24-bit data
- *   packed into 32-bit I2S frames. We read as int32 and normalize.
+ * BITS_PER_SAMPLE: 32. The INMP441 outputs 24-bit data left-justified in a
+ *   32-bit I2S frame, so alsa_capture reads S32_LE and divides by 2^31.
  * ------------------------------------------------------------------------ */
 #define SAMPLE_RATE         48000
 #define NUM_CHANNELS        4
@@ -37,8 +34,8 @@
 /* ---------------------------------------------------------------------------
  * Ring Buffer Parameters
  * ---------------------------------------------------------------------------
- * RING_BUFFER_SECONDS: How much audio history to keep. 2 seconds gives
- *   ample margin for capturing the pre-trigger portion of an event.
+ * RING_BUFFER_SECONDS: How much audio history to keep. 2 seconds is plenty
+ *   to hold the audio from just before an event.
  *
  * RING_BUFFER_FRAMES: Total frames in the ring buffer. One "frame"
  *   contains one sample from each channel.
@@ -72,8 +69,10 @@
  *   power of 2. 4096 at 48 kHz gives ~85 ms analysis window, which
  *   is more than enough for impulsive events (typically < 5 ms).
  *
- * SNAPSHOT_FRAMES: Number of frames to capture around a trigger event
- *   for GCC-PHAT analysis. Should be <= FFT_SIZE.
+ * SNAPSHOT_FRAMES: How many frames the bridge pulls from the ring buffer for
+ *   GCC-PHAT analysis. Must be <= FFT_SIZE. ring_buffer_snapshot() returns a
+ *   TRAILING window -- the most recent N frames as of the call -- so this is
+ *   not centred on the trigger. 4096 frames is 85 ms at 48 kHz.
  *
  * PHAT_EPSILON: Small value added to the denominator of the PHAT
  *   normalization to avoid division by zero in silent regions.
@@ -97,9 +96,10 @@
  *   1 degree gives 181 candidate angles, which is fast enough for
  *   real-time on a Pi 5.
  *
- * SPEED_OF_SOUND: Default value at 20 degrees Celsius.
- *   For temperature-compensated operation, recalculate using:
- *   c = 331 * sqrt(1 + T/273) where T is in Celsius.
+ * SPEED_OF_SOUND: Value at 20 degrees Celsius. Compile-time only -- srp_phat
+ *   and gcc_phat use this macro directly, so changing it for a different
+ *   ambient temperature means editing here and rebuilding. The relation is
+ *   c = 331 * sqrt(1 + T/273), T in Celsius.
  * ------------------------------------------------------------------------ */
 #define AZIMUTH_MIN_DEG     (-90.0f)
 #define AZIMUTH_MAX_DEG     (90.0f)
@@ -110,8 +110,9 @@
  * Microphone Array Geometry
  * ---------------------------------------------------------------------------
  * ARRAY_RADIUS_M: Radius of the semicircular array in meters.
- *   0.08 m (8 cm) provides a good balance between angular resolution
- *   and spatial aliasing avoidance.
+ *   0.08 m (8 cm) trades angular resolution against spatial aliasing.
+ *   gcc_phat derives its correlation search window from this, so it must
+ *   match the MIC_POSITIONS table below.
  *
  * MIC_POSITIONS: Defined in acoustic_config.c as a global array.
  *   Coordinates are in meters, with the array center at the origin.
@@ -138,12 +139,15 @@ extern const mic_position_t MIC_POSITIONS[NUM_CHANNELS];
 /* ---------------------------------------------------------------------------
  * Acoustic Event Structure
  * ---------------------------------------------------------------------------
- * This is the output of the detection + localization pipeline, passed
- * to the WebSocket reporter for transmission to the Android app.
+ * The shape of one detection+localization result. Not currently populated:
+ * acoustic_bridge_tick() serialises these same fields straight to JSON. Kept
+ * as the definition to use if an event ever needs queueing or logging.
  * ------------------------------------------------------------------------ */
 typedef struct
 {
-    uint64_t    timestamp_us;       /* Microseconds since epoch (CLOCK_MONOTONIC) */
+    uint64_t    timestamp_us;       /* CLOCK_MONOTONIC microseconds. NOT wall clock --
+                                       the origin is arbitrary (boot on Linux), so only
+                                       differences between events are meaningful. */
     float       azimuth_deg;        /* Estimated bearing: -90 to +90 degrees */
     float       confidence;         /* 0.0 to 1.0, based on SRP-PHAT peak quality */
     float       peak_amplitude;     /* Normalized peak amplitude of the event */
@@ -161,9 +165,10 @@ typedef struct
 #define DEG_TO_RAD(d)   ((float)(d) * (float)M_PI / 180.0f)
 #define RAD_TO_DEG(r)   ((float)(r) * 180.0f / (float)M_PI)
 
-/* Minimum of two values */
+/* Both evaluate their arguments twice -- never pass an expression with side
+ * effects. Defined unconditionally, so this header cannot be combined with one
+ * that also defines MIN/MAX (sys/param.h, for instance). */
 #define MIN(a, b)       ((a) < (b) ? (a) : (b))
-/* Maximum of two values */
 #define MAX(a, b)       ((a) > (b) ? (a) : (b))
 
 #endif /* ACOUSTIC_CONFIG_H */

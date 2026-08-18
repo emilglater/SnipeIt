@@ -3,15 +3,12 @@
  *
  * Real-time impulsive event detector.
  *
- * The high-pass filter is a 2nd-order Butterworth design, computed
- * using the bilinear transform. This is a standard IIR filter topology
- * that is efficient to compute (5 multiply-adds per sample).
+ * The high-pass filter is a 2nd-order Butterworth biquad, 5 multiply-adds per
+ * sample.
  *
- * The energy tracking uses exponential moving averages (EMAs) rather
- * than true windowed sums. EMAs are computationally cheaper (one multiply-
- * add per sample vs. maintaining a sliding window) and respond smoothly
- * to energy changes. The time constant is set so that the EMA approximates
- * a rectangular window of the specified duration.
+ * Energy tracking uses exponential moving averages rather than true windowed
+ * sums: an EMA costs one multiply-add per sample instead of keeping a sliding
+ * window, and its time constant is set to match the window length we want.
  */
 
 #include <stdlib.h>
@@ -23,9 +20,8 @@
 /* ---------------------------------------------------------------------------
  * Internal: Compute 2nd-order Butterworth high-pass filter coefficients.
  *
- * The Butterworth filter is chosen because it has maximally flat passband
- * response, meaning it does not distort the gunshot signal shape in the
- * passband. The bilinear transform maps the analog prototype to digital.
+ * Butterworth: the flattest passband of the standard shapes, so it leaves the
+ * shape of the blast alone.
  *
  * Transfer function:
  *   H(z) = (b0 + b1*z^-1 + b2*z^-2) / (1 + a1*z^-1 + a2*z^-2)
@@ -34,13 +30,16 @@ static void compute_highpass_coefficients(float cutoff_hz, int sample_rate,
                                            float *b0, float *b1, float *b2,
                                            float *a1, float *a2)
 {
-    /* Pre-warp the cutoff frequency for the bilinear transform */
+    /* Normalised cutoff in radians per sample. The coefficients below are the
+     * RBJ audio-cookbook high-pass biquad, which folds the bilinear-transform
+     * frequency warping into its closed form, so no explicit pre-warp here. */
     float omega = 2.0f * (float)M_PI * cutoff_hz / (float)sample_rate;
     float alpha = sinf(omega) / (2.0f * 0.7071f);  /* Q = 0.7071 for Butterworth */
 
     float cos_omega = cosf(omega);
 
-    /* Unnormalized coefficients */
+    /* a0. Every coefficient below is divided through by it, so the difference
+     * equation in onset_detector_process() can assume a0 == 1. */
     float norm = 1.0f + alpha;
 
     *b0 = (1.0f + cos_omega) / (2.0f * norm);
@@ -104,7 +103,12 @@ onset_detector_t *onset_detector_create(int sample_rate, float cutoff_hz,
      * Minimum energy floor: the long-term energy must exceed this value
      * before the ratio test is applied. This prevents false triggers
      * when the environment is nearly silent and the ratio is unstable.
-     * This value corresponds to roughly -60 dBFS noise floor.
+     *
+     * 1e-8 in energy is an RMS amplitude of 1e-4, i.e. a -80 dBFS floor.
+     * This is the detection gate -- raise it (1e-6 is -60 dBFS) if quiet-room
+     * false triggers appear. Not to be confused with the bare 1e-12 guards in
+     * onset_detector_process() and _get_energy_ratio(), which only exist to
+     * avoid dividing by zero.
      */
     det->min_energy_floor = 1e-8f;
 

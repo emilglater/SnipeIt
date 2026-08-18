@@ -5,9 +5,10 @@
  *
  * Key implementation notes:
  *
- * 1. FFTW plans are created with FFTW_MEASURE during initialization.
- *    This takes longer (~100 ms) than FFTW_ESTIMATE but produces faster
- *    plans. Since we create plans only once, this is the right tradeoff.
+ * 1. FFTW plans use FFTW_ESTIMATE. Planning is then near-instant, at the cost
+ *    of a slower transform than FFTW_MEASURE would produce. Switching to
+ *    FFTW_MEASURE is safe if FFT time ever shows up in a profile: plans are
+ *    built once in gcc_phat_create(), never on the event path.
  *
  * 2. The PHAT normalization divides the cross-spectrum by its magnitude.
  *    This effectively discards amplitude information and retains only phase,
@@ -16,15 +17,18 @@
  *
  * 3. Parabolic interpolation around the correlation peak provides sub-sample
  *    delay precision. Without it, the delay resolution is limited to 1/fs
- *    (about 21 microseconds at 48 kHz). With interpolation, we achieve
- *    roughly 1/10 of a sample (~2 microseconds), which translates to
- *    sub-degree angular precision for our array geometry.
+ *    (about 21 microseconds at 48 kHz). With interpolation, roughly 1/10 of a
+ *    sample (~2 microseconds) is achievable, which is about 0.25 degrees at
+ *    boresight for our 16 cm aperture. Angular precision falls off as
+ *    cos(azimuth), so the edges of the +/-90 degree range are several times
+ *    coarser than that.
  *
- * 4. The correlation output of IFFT has the zero-lag at index 0, positive
- *    lags at indices 1..N/2-1, and negative lags at indices N/2..N-1
- *    (wrapped around). We search across both positive and negative lags
- *    up to the maximum physically possible delay (limited by mic spacing
- *    and speed of sound).
+ * 4. The correlation output of IFFT has the zero-lag at index 0, positive lags
+ *    at indices 1..N/2, and negative lags at indices N/2+1..N-1 (wrapped
+ *    around, mapping to lags -(N/2-1)..-1). We search across both positive and
+ *    negative lags up to the maximum physically possible delay (limited by mic
+ *    spacing and speed of sound), which is ~24 samples here -- so the
+ *    ambiguous index N/2 is never reached.
  */
 
 #include <stdlib.h>
@@ -44,7 +48,11 @@
  * ------------------------------------------------------------------------ */
 static float parabolic_interpolation(const float *y, int idx, int len)
 {
-    /* Handle edge cases: if peak is at the boundary, no interpolation */
+    /* Neighbours wrap modulo len. This is correct, not a guard: the IFFT
+     * output is a circular correlation, so index len-1 really does neighbour
+     * index 0. Note idx is the maximum only within the restricted search
+     * window, so at the window edge y[next] can exceed y[idx] and the parabola
+     * fit is meaningless -- the clamp below bounds the damage. */
     int prev = (idx - 1 + len) % len;
     int next = (idx + 1) % len;
 
@@ -246,17 +254,21 @@ void gcc_phat_compute_pair(gcc_phat_workspace_t *ws,
      * this range to avoid picking up spurious peaks from noise.
      *
      * The correlation array layout (from FFTW's real-to-complex IFFT):
-     *   Index 0:       zero lag
-     *   Index 1..N/2:  positive lags (signal B is delayed)
-     *   Index N/2..N-1: negative lags (signal A is delayed)
-     *                   These correspond to lags -(N/2)..-1
+     *   Index 0:         zero lag
+     *   Index 1..N/2:    positive lags (signal B is delayed)
+     *   Index N/2+1..N-1: negative lags (signal A is delayed),
+     *                     corresponding to lags -(N/2-1)..-1
      *
-     * We compute the max physically possible separation across any
-     * pair in our array. For a semicircular array of radius R,
-     * the maximum distance is the diameter = 2*R.
+     * We compute the max physically possible separation across any pair in our
+     * array. For a semicircular array of radius R, the maximum distance is the
+     * diameter = 2*R. This comes from ARRAY_RADIUS_M, not from MIC_POSITIONS,
+     * so keep the two in sync: too wide only admits spurious peaks, but too
+     * narrow silently clips real delays.
      */
     float max_distance = 2.0f * ARRAY_RADIUS_M;
     float max_delay_sec = max_distance / SPEED_OF_SOUND;
+    /* +2 past the ceil so a peak sitting at the true physical limit still has
+     * a valid neighbour on each side for the parabolic interpolator below. */
     int max_delay_samples = (int)ceilf(max_delay_sec * (float)sample_rate) + 2;
 
     /* Clamp search range to buffer limits */
@@ -268,7 +280,7 @@ void gcc_phat_compute_pair(gcc_phat_workspace_t *ws,
     float best_val = -1e30f;
     int best_idx = 0;
 
-    /* Search positive lags: indices 0..max_delay_samples */
+    /* Search zero and positive lags: indices 0..max_delay_samples */
     for (int i = 0; i <= max_delay_samples; i++)
     {
         float val = ws->correlation[i];
@@ -323,12 +335,10 @@ void gcc_phat_compute_all_pairs(gcc_phat_workspace_t *ws,
     int ch = ws->num_channels;
 
     /*
-     * Temporary buffers for extracting single-channel data from
-     * the interleaved multichannel buffer.
-     *
-     * We allocate these on the stack if fft_size is reasonable (< 64K),
-     * otherwise fall back to malloc. For 4096 * 4 bytes = 16 KB per
-     * channel, stack allocation is fine.
+     * Scratch buffers for de-interleaving one pair at a time. Sized by
+     * num_frames, not fft_size: 2 * 4096 floats is ~32 KB at the usual
+     * snapshot length. This runs on the main-loop tick rather than the
+     * capture thread, so the allocation is not on a real-time path.
      */
     float *mono_a = (float *)malloc(sizeof(float) * num_frames);
     float *mono_b = (float *)malloc(sizeof(float) * num_frames);
@@ -365,7 +375,6 @@ int gcc_phat_get_pair_index(const gcc_phat_workspace_t *ws, int mic_i, int mic_j
 {
     if (!ws) return -1;
 
-    /* Ensure i < j */
     if (mic_i > mic_j)
     {
         int tmp = mic_i;

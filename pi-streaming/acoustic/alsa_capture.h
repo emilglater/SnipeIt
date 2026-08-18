@@ -8,8 +8,9 @@
  * interface on the Raspberry Pi 5 and feeds the data into the
  * ring buffer for processing by the detection pipeline.
  *
- * The capture runs in a dedicated thread at high priority to
- * minimize the risk of buffer underruns (xruns).
+ * The capture runs in its own high-priority thread so the buffer does not
+ * overflow (an "xrun"). The RT priority is best-effort: it needs root or
+ * CAP_SYS_NICE, and the thread runs at normal priority if that is refused.
  *
  * Integration:
  *   1. Create an alsa_capture instance.
@@ -68,7 +69,8 @@ typedef struct
 
     /* Statistics */
     unsigned long       total_frames_captured;
-    unsigned long       xrun_count;
+    unsigned long       xrun_count;          /* Failed reads: xruns plus any other
+                                                snd_pcm_readi error */
 
     /* Device name */
     char                device_name[64];
@@ -138,8 +140,10 @@ int alsa_capture_start(alsa_capture_t *cap);
 /**
  * alsa_capture_stop - Stop capturing and close the ALSA device.
  *
- * Signals the capture thread to stop, waits for it to exit, and
- * closes the ALSA handle. Safe to call multiple times.
+ * Signals the capture thread to stop, joins it, and closes the ALSA handle.
+ * Safe to call multiple times. No-op when `running` is already 0 -- including
+ * when the capture thread cleared it by exiting on its own, in which case the
+ * handle is not closed here.
  */
 void alsa_capture_stop(alsa_capture_t *cap);
 
