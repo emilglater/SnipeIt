@@ -31,19 +31,20 @@
 #include "onset_detector.h"
 
 /**
- * Callback function type for onset detection events.
+ * @brief Callback function type for onset detection events.
  *
- * @timestamp_us:  Timestamp of the event in microseconds (CLOCK_MONOTONIC).
- * @user_data:     Opaque pointer passed during setup.
+ * @param timestamp_us Timestamp of the event in microseconds
+ *                     (CLOCK_MONOTONIC).
+ * @param user_data    Opaque pointer passed during setup.
  *
- * This callback is invoked from the capture thread when the onset
- * detector fires. The callback should be fast (e.g., set a flag or
- * post to a queue) and must not block.
+ * @details Invoked from the capture thread when the onset detector fires. The
+ *          callback should be fast (e.g., set a flag or post to a queue) and
+ *          must not block.
  */
 typedef void (*onset_callback_t)(uint64_t timestamp_us, void *user_data);
 
 /**
- * ALSA capture state.
+ * @brief ALSA capture state.
  */
 typedef struct
 {
@@ -77,20 +78,21 @@ typedef struct
 } alsa_capture_t;
 
 /**
- * alsa_capture_create - Allocate and configure an ALSA capture instance.
+ * @brief Allocate and configure an ALSA capture instance.
  *
- * @device_name:   ALSA device name (e.g., "hw:0", "plughw:0", "default").
- *                 Use "hw:0" for direct hardware access (lowest latency).
- *                 Use "plughw:0" for automatic format conversion.
- * @sample_rate:   Desired sample rate (e.g., 48000).
- * @num_channels:  Number of channels to capture (2 for one I2S bus,
- *                 4 for two buses, etc.).
- * @chunk_frames:  Number of frames per read chunk. Smaller = lower latency
- *                 but higher CPU overhead. 480 frames at 48 kHz = 10 ms.
+ * @param device_name  ALSA device name (e.g., "hw:0", "plughw:0", "default").
+ *                     Use "hw:0" for direct hardware access (lowest latency).
+ *                     Use "plughw:0" for automatic format conversion.
+ * @param sample_rate  Desired sample rate (e.g., 48000).
+ * @param num_channels Number of channels to capture (2 for one I2S bus, 4 for
+ *                     two buses, etc.).
+ * @param chunk_frames Number of frames per read chunk. Smaller = lower latency
+ *                     but higher CPU overhead. 480 frames at 48 kHz = 10 ms.
  *
- * Returns a pointer to the capture instance, or NULL on failure.
- * Does NOT open the ALSA device or start capturing; call
- * alsa_capture_start() for that.
+ * @details Does NOT open the ALSA device or start capturing; call
+ *          alsa_capture_start() for that.
+ *
+ * @returns A pointer to the capture instance, or NULL on failure.
  */
 alsa_capture_t *alsa_capture_create(const char *device_name,
                                      int sample_rate,
@@ -98,63 +100,83 @@ alsa_capture_t *alsa_capture_create(const char *device_name,
                                      int chunk_frames);
 
 /**
- * alsa_capture_destroy - Free all resources.
- * If capture is running, stops it first.
+ * @brief Free all resources.
+ *
+ * @param cap The capture instance. May be NULL (no-op).
+ *
+ * @details If capture is running, stops it first.
  */
 void alsa_capture_destroy(alsa_capture_t *cap);
 
 /**
- * alsa_capture_set_ring_buffer - Set the ring buffer for audio storage.
- * Must be called before alsa_capture_start().
+ * @brief Set the ring buffer for audio storage.
+ *
+ * @param cap The capture instance.
+ * @param rb  The ring buffer to write captured audio into. Non-owning.
+ *
+ * @details Must be called before alsa_capture_start().
  */
 void alsa_capture_set_ring_buffer(alsa_capture_t *cap, ring_buffer_t *rb);
 
 /**
- * alsa_capture_set_onset_detector - Set the onset detector for event detection.
- * Must be called before alsa_capture_start().
+ * @brief Set the onset detector for event detection.
+ *
+ * @param cap The capture instance.
+ * @param det The onset detector to run on each chunk. Non-owning.
+ *
+ * @details Must be called before alsa_capture_start().
  */
 void alsa_capture_set_onset_detector(alsa_capture_t *cap, onset_detector_t *det);
 
 /**
- * alsa_capture_set_onset_callback - Register a callback for onset events.
+ * @brief Register a callback for onset events.
  *
- * @cap:       The capture instance.
- * @callback:  Function to call when an onset is detected.
- * @user_data: Opaque pointer passed to the callback.
+ * @param cap       The capture instance.
+ * @param callback  Function to call when an onset is detected.
+ * @param user_data Opaque pointer passed to the callback.
  */
 void alsa_capture_set_onset_callback(alsa_capture_t *cap,
                                       onset_callback_t callback,
                                       void *user_data);
 
 /**
- * alsa_capture_start - Open the ALSA device and begin capturing.
+ * @brief Open the ALSA device and begin capturing.
  *
- * Spawns a background thread that continuously reads audio from the
- * I2S interface, writes it to the ring buffer, runs the onset detector,
- * and invokes the callback on events.
+ * @param cap The capture instance.
  *
- * Returns 0 on success, -1 on failure.
+ * @details Spawns a background thread that continuously reads audio from the
+ *          I2S interface, writes it to the ring buffer, runs the onset
+ *          detector, and invokes the callback on events.
+ *
+ * @returns 0 on success, -1 on failure.
  */
 int alsa_capture_start(alsa_capture_t *cap);
 
 /**
- * alsa_capture_stop - Stop capturing and close the ALSA device.
+ * @brief Stop capturing and close the ALSA device.
  *
- * Signals the capture thread to stop, joins it, and closes the ALSA handle.
- * Safe to call multiple times. No-op when `running` is already 0 -- including
- * when the capture thread cleared it by exiting on its own, in which case the
- * handle is not closed here.
+ * @param cap The capture instance.
+ *
+ * @details Signals the capture thread to stop, joins it, and closes the ALSA
+ *          handle. Safe to call multiple times. No-op when `running` is
+ *          already 0 -- including when the capture thread cleared it by
+ *          exiting on its own, in which case the handle is not closed here.
  */
 void alsa_capture_stop(alsa_capture_t *cap);
 
 /**
- * alsa_capture_is_running - Check if capture is active.
+ * @brief Check if capture is active.
+ *
+ * @param cap The capture instance. May be NULL.
+ *
+ * @returns 1 if the capture thread is running, 0 otherwise (including NULL).
  */
 int alsa_capture_is_running(const alsa_capture_t *cap);
 
 /**
- * alsa_capture_list_devices - Print available ALSA capture devices.
- * Useful for debugging: helps identify the correct device name.
+ * @brief Print available ALSA capture devices to stdout.
+ *
+ * @details Useful for debugging: helps identify the correct device name.
  */
 void alsa_capture_list_devices(void);
 

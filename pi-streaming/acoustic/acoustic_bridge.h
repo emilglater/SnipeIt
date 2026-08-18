@@ -18,26 +18,32 @@
 typedef struct AcousticBridge AcousticBridge;
 
 /**
- * Initialize ALSA capture, onset detector, GCC-PHAT, SRP-PHAT, and
- * spawn the audio capture thread.
+ * @brief Initialize ALSA capture, onset detector, GCC-PHAT and SRP-PHAT, and
+ *        spawn the audio capture thread.
  *
  * @param ws Reference to the running WebSocketServer. Non-owning. Must remain
  *           valid for the lifetime of the bridge.
  *
- * @return New AcousticBridge instance, or NULL on failure.
+ * @returns A new AcousticBridge instance, or NULL on failure.
  */
 AcousticBridge* acoustic_bridge_start(WebSocketServer* ws);
 
 /**
- * Service any pending acoustic events. Call from the main poll loop
- * alongside ddl_bridge_tick(). Cheap when no event is pending.
+ * @brief Service any pending acoustic events.
  *
- * @return Number of events processed (0 or 1 per call).
+ * @param b The bridge instance. May be NULL (no-op).
+ *
+ * @details Call from the main poll loop alongside ddl_bridge_tick(). Cheap
+ *          when no event is pending.
+ *
+ * @returns The number of events processed (0 or 1 per call).
  */
 int acoustic_bridge_tick(AcousticBridge* b);
 
 /**
- * Stop the capture thread and release all resources.
+ * @brief Stop the capture thread and release all resources.
+ *
+ * @param b The bridge instance. May be NULL (no-op).
  */
 void acoustic_bridge_stop(AcousticBridge* b);
 

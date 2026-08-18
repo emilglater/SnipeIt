@@ -126,7 +126,9 @@
  * ------------------------------------------------------------------------ */
 #define ARRAY_RADIUS_M      0.08f
 
-/* Microphone position structure */
+/**
+ * @brief One microphone's position in the array coordinate frame.
+ */
 typedef struct
 {
     float x;  /* meters, positive = right */

@@ -28,7 +28,7 @@
 #include "gcc_phat.h"
 
 /**
- * SRP-PHAT result structure.
+ * @brief SRP-PHAT result structure.
  */
 typedef struct
 {
@@ -43,27 +43,27 @@ typedef struct
 } srp_phat_result_t;
 
 /**
- * srp_phat_estimate - Estimate the source azimuth using SRP-PHAT.
+ * @brief Estimate the source azimuth using SRP-PHAT.
  *
- * @gcc_ws:       The GCC-PHAT workspace, already populated by a call to
- *                gcc_phat_compute_all_pairs(). Reads pair_indices[],
- *                tdoa_results[], peak_values[] and num_pairs. The correlation
- *                scratch buffer is NOT used, so it may be overwritten between
- *                the two calls.
- * @multichannel: The same multichannel audio passed to gcc_phat.
- *                Not used; kept for potential future use.
- * @num_frames:   Number of audio frames. Not used.
- * @sample_rate:  Sample rate in Hz.
- * @result:       Output structure filled with the estimated azimuth,
- *                confidence, and the full power spectrum.
+ * @param gcc_ws       The GCC-PHAT workspace, already populated by a call to
+ *                     gcc_phat_compute_all_pairs(). Reads pair_indices[],
+ *                     tdoa_results[], peak_values[] and num_pairs. The
+ *                     correlation scratch buffer is NOT used, so it may be
+ *                     overwritten between the two calls.
+ * @param multichannel The same multichannel audio passed to gcc_phat.
+ *                     Not used; kept for potential future use.
+ * @param num_frames   Number of audio frames. Not used.
+ * @param sample_rate  Sample rate in Hz.
+ * @param result       Output structure filled with the estimated azimuth,
+ *                     confidence, and the full power spectrum.
  *
- * The function sweeps azimuth from AZIMUTH_MIN_DEG to AZIMUTH_MAX_DEG
- * in steps of AZIMUTH_STEP_DEG, computing SRP-PHAT power at each.
+ * @details Sweeps azimuth from AZIMUTH_MIN_DEG to AZIMUTH_MAX_DEG in steps of
+ *          AZIMUTH_STEP_DEG, computing SRP-PHAT power at each.
  *
- * Confidence = 1 - (mean power / peak power) across the swept angles. A sharp
- * peak against a low background gives a value near 1; a flat spectrum gives
- * near 0. It is not a probability. See srp_phat.c for why this replaced a
- * peak-versus-second-peak measure.
+ *          Confidence = 1 - (mean power / peak power) across the swept angles.
+ *          A sharp peak against a low background gives a value near 1; a flat
+ *          spectrum gives near 0. It is not a probability. See srp_phat.c for
+ *          why this replaced a peak-versus-second-peak measure.
  */
 void srp_phat_estimate(const gcc_phat_workspace_t *gcc_ws,
                         const float *multichannel,
@@ -72,18 +72,19 @@ void srp_phat_estimate(const gcc_phat_workspace_t *gcc_ws,
                         srp_phat_result_t *result);
 
 /**
- * srp_phat_compute_expected_tdoa - Compute the expected TDOA between
- * two microphones for a plane wave arriving from a given azimuth.
+ * @brief Compute the expected TDOA between two microphones for a plane wave
+ *        arriving from a given azimuth.
  *
- * @mic_a:       Position of microphone A.
- * @mic_b:       Position of microphone B.
- * @azimuth_deg: Source azimuth in degrees (0 = forward, positive = right).
+ * @param mic_a       Position of microphone A.
+ * @param mic_b       Position of microphone B.
+ * @param azimuth_deg Source azimuth in degrees (0 = forward, positive = right).
  *
- * Returns the expected TDOA in seconds (positive means signal arrives
- * at mic_b later than mic_a).
+ * @details The plane-wave assumption holds when the source is far compared to
+ *          the array. Ours is 16 cm across and targets are metres away, so it
+ *          holds easily.
  *
- * The plane-wave assumption holds when the source is far compared to the
- * array. Ours is 16 cm across and targets are metres away, so it holds easily.
+ * @returns The expected TDOA in seconds. Positive means the signal arrives at
+ *          mic_b later than mic_a.
  */
 float srp_phat_compute_expected_tdoa(mic_position_t mic_a,
                                       mic_position_t mic_b,

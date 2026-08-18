@@ -25,8 +25,10 @@
 #include "acoustic_config.h"
 
 /**
- * Pre-allocated workspace for GCC-PHAT computation.
- * We build the FFTW plans and buffers once and reuse them for every event.
+ * @brief Pre-allocated workspace for GCC-PHAT computation.
+ *
+ * @details We build the FFTW plans and buffers once and reuse them for every
+ *          event.
  */
 typedef struct
 {
@@ -58,39 +60,42 @@ typedef struct
 } gcc_phat_workspace_t;
 
 /**
- * gcc_phat_create - Allocate workspace and create FFTW plans.
+ * @brief Allocate workspace and create FFTW plans.
  *
- * @fft_size:     FFT length (must be power of 2, e.g., 4096).
- * @num_channels: Number of microphones.
+ * @param fft_size     FFT length (must be a power of 2, e.g., 4096).
+ * @param num_channels Number of microphones.
  *
- * Returns a pointer to the workspace, or NULL on failure.
- * Do this once at startup: the workspace holds the plans and scratch buffers,
- * and gcc_phat_compute_pair() then allocates nothing.
+ * @details Do this once at startup: the workspace holds the plans and scratch
+ *          buffers, and gcc_phat_compute_pair() then allocates nothing.
+ *
+ * @returns A pointer to the workspace, or NULL on failure.
  */
 gcc_phat_workspace_t *gcc_phat_create(int fft_size, int num_channels);
 
 /**
- * gcc_phat_destroy - Free all workspace memory and FFTW plans.
+ * @brief Free all workspace memory and FFTW plans.
+ *
+ * @param ws The workspace to destroy. May be NULL (no-op).
  */
 void gcc_phat_destroy(gcc_phat_workspace_t *ws);
 
 /**
- * gcc_phat_compute_all_pairs - Compute TDOA for all microphone pairs.
+ * @brief Compute TDOA for all microphone pairs.
  *
- * @ws:             The pre-allocated workspace.
- * @multichannel:   Interleaved multichannel audio data.
- *                  Layout: [f0_ch0, f0_ch1, ..., f1_ch0, f1_ch1, ...]
- * @num_frames:     Number of frames in the input (should be <= fft_size).
- * @sample_rate:    Sample rate for converting delay from samples to seconds.
+ * @param ws           The pre-allocated workspace.
+ * @param multichannel Interleaved multichannel audio data.
+ *                     Layout: [f0_ch0, f0_ch1, ..., f1_ch0, f1_ch1, ...]
+ * @param num_frames   Number of frames in the input (should be <= fft_size).
+ * @param sample_rate  Sample rate, for converting delay from samples to
+ *                     seconds.
  *
- * After this call:
- *   ws->tdoa_results[p] contains the TDOA in seconds for pair p.
- *   ws->peak_values[p]  contains the peak correlation value for pair p.
- *                       Signed, not an absolute magnitude.
+ * @details After this call:
+ *          - ws->tdoa_results[p] holds the TDOA in seconds for pair p.
+ *          - ws->peak_values[p] holds the peak correlation value for pair p,
+ *            signed, not an absolute magnitude.
  *
- * The TDOA sign convention:
- *   Positive TDOA means signal arrives at mic pair_indices[p][1] LATER
- *   than at mic pair_indices[p][0].
+ *          TDOA sign convention: a positive TDOA means the signal arrives at
+ *          mic pair_indices[p][1] LATER than at mic pair_indices[p][0].
  */
 void gcc_phat_compute_all_pairs(gcc_phat_workspace_t *ws,
                                  const float *multichannel,
@@ -98,19 +103,19 @@ void gcc_phat_compute_all_pairs(gcc_phat_workspace_t *ws,
                                  int sample_rate);
 
 /**
- * gcc_phat_compute_pair - Compute TDOA for a single microphone pair.
+ * @brief Compute TDOA for a single microphone pair.
  *
- * @ws:          The workspace.
- * @signal_a:    Mono audio from microphone A (num_frames samples).
- * @signal_b:    Mono audio from microphone B (num_frames samples).
- * @num_frames:  Number of samples in each signal.
- * @sample_rate: Sample rate in Hz.
- * @tdoa_out:    Output: estimated TDOA in seconds.
- * @peak_out:    Output: peak correlation value, signed, normalised by fft_size
- *               (confidence indicator).
+ * @param ws          The workspace.
+ * @param signal_a    Mono audio from microphone A (num_frames samples).
+ * @param signal_b    Mono audio from microphone B (num_frames samples).
+ * @param num_frames  Number of samples in each signal.
+ * @param sample_rate Sample rate in Hz.
+ * @param tdoa_out    Output: estimated TDOA in seconds.
+ * @param peak_out    Output: peak correlation value, signed, normalised by
+ *                    fft_size (confidence indicator).
  *
- * This is the low-level function; gcc_phat_compute_all_pairs calls it
- * internally for each pair.
+ * @details The low-level entry point; gcc_phat_compute_all_pairs() calls it
+ *          internally for each pair.
  */
 void gcc_phat_compute_pair(gcc_phat_workspace_t *ws,
                             const float *signal_a,
@@ -121,11 +126,16 @@ void gcc_phat_compute_pair(gcc_phat_workspace_t *ws,
                             float *peak_out);
 
 /**
- * gcc_phat_get_pair_index - Given two mic indices (i, j), return the
- * pair index p such that ws->tdoa_results[p] is the TDOA for that pair.
+ * @brief Map two mic indices to the pair index used by the result arrays.
  *
- * Order does not matter; the two indices are sorted internally.
- * Returns -1 if the pair is not found.
+ * @param ws    The workspace.
+ * @param mic_i One microphone index.
+ * @param mic_j The other microphone index.
+ *
+ * @details Order does not matter; the two indices are sorted internally.
+ *
+ * @returns The pair index p, such that ws->tdoa_results[p] is the TDOA for
+ *          that pair, or -1 if the pair is not found.
  */
 int gcc_phat_get_pair_index(const gcc_phat_workspace_t *ws, int mic_i, int mic_j);
 
