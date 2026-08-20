@@ -14,22 +14,19 @@
  * geometry clamps to the same range the servo FSM accepts. */
 #include "ddl/servo/servo_config.h"
 
-/* MEASURED FOV for the 1080p capture path (probe_camera_fov.py, 2026-07-01,
- * IMX477 + 16mm on this rig). picamera2's config for main=1920x1080 selects the
- * 2028x1080 sensor mode and the ISP applies ScalerCrop (108, 440, 3840, 2160) —
- * i.e. a 3840x2160 sensor rectangle (1.55um pitch) mapped to the 1080p output:
+/* MEASURED FOV for the 1080p capture path (script/probe_camera_fov.py,
+ * IMX477 + 16mm on this rig). For a 1920x1080 output libcamera selects the
+ * 2028x1080 sensor mode and applies ScalerCrop (108, 440, 3840, 2160) — i.e. a
+ * 3840x2160 sensor rectangle (1.55um pitch) mapped to the 1080p output:
  *
  *   HFOV = 2*atan( 3840*1.55um / (2*16mm) )  = 21.07 deg
  *   VFOV = 2*atan( 2160*1.55um / (2*16mm) )  = 11.95 deg
  *
- * Re-run probe_camera_fov.py and update these if the lens, sensor mode, or the
- * main-stream size/aspect changes.
+ * First measured 2026-07-01 through picamera2, back when person_streamer.py
+ * owned the camera.
  *
- * CAVEAT: measured under the old picamera2 capture path; the pipeline now uses
- * libcamerasrc, which negotiates its own sensor mode and ScalerCrop. A live run
- * on 2026-08-16 confirmed libcamerasrc selects the SAME 2028x1080 sensor mode
- * for a 1920x1080 output, so the mode matches. The ScalerCrop it applies has
- * not been checked; confirm that before trusting these to sub-degree accuracy. */
+ * Re-run probe_camera_fov.py and update these if the lens, sensor mode, or the
+ * main-stream size/aspect changes. */
 #define AIM_DEFAULT_HFOV_DEG   21.07f
 #define AIM_DEFAULT_VFOV_DEG   11.95f
 #define AIM_DEFAULT_FRAME_W    1920

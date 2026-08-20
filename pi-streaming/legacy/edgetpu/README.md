@@ -13,6 +13,8 @@ moved to the Orin. Kept as a fallback.
   was still compiled into `streaming_server` even though `main.c` stopped
   calling it when detection moved to the Orin.
 - `test_ipc.c` — C harness that drove `unix_socket.c` against `test_ipc.py`.
+- `probe_camera_fov.py` — measured the capture FOV through picamera2, by
+  replicating `person_streamer.py`'s camera configuration.
 - `models/` — the EdgeTPU / tflite detection models + labels.
 - `check.py`, `diag_tpu.py`, `probe_uint8.py`, `test_on_video.py`, `test_ipc.py`
   — EdgeTPU diagnostics / dev tools.
