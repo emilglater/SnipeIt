@@ -9,6 +9,9 @@ mediamtx_*.tar.gz
 # project documentation; the durable content belongs in the architecture docs.
 notes/
 
+# Local Claude Code guidance for this directory. Deliberately untracked.
+CLAUDE.md
+
 # Test videos
 *.mp4
 
