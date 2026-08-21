@@ -28,43 +28,44 @@ int pm_start_mediamtx(ProcessManager *pm, const StreamingConfig *config)
         printf("[PM] mediaMTX is already running (PID: %d)\n", pm->mediamtx_pid);
         return 0;
     }
-    
+
     printf("[PM] Starting mediaMTX...\n");
-    
+
     pid_t pid = fork();
-    
+
     if (pid < 0)
     {
         perror("[PM] fork failed for mediaMTX");
         return -1;
     }
-    
+
     if (pid == 0)
     {
         // Child process - exec mediaMTX
-        
-        // Redirect stdout/stderr to /dev/null or log file
-        // (mediaMTX is quite verbose)
-        freopen("/tmp/mediamtx.log", "w", stdout);
-        freopen("/tmp/mediamtx.log", "a", stderr);
-        
+
+        /* Redirect stdout/stderr to a log file (mediaMTX is quite verbose).
+         * Return value deliberately ignored: this is the forked child on its
+         * way to execl, and there is nowhere useful left to report a failure. */
+        (void)freopen("/tmp/mediamtx.log", "w", stdout);
+        (void)freopen("/tmp/mediamtx.log", "a", stderr);
+
         // Execute mediaMTX
-        execl(config->mediamtx_path, 
+        execl(config->mediamtx_path,
               config->mediamtx_path,
               config->mediamtx_config,
               (char *)NULL);
-        
+
         // If exec fails
         perror("[PM] execl mediaMTX failed");
         _exit(127);
     }
-    
+
     // Parent process
     pm->mediamtx_pid = pid;
     pm->mediamtx_running = true;
-    
+
     printf("[PM] mediaMTX started (PID: %d)\n", pm->mediamtx_pid);
-    
+
     return 0;
 }
 
@@ -74,12 +75,12 @@ void pm_stop_mediamtx(ProcessManager *pm)
     {
         return;
     }
-    
+
     printf("[PM] Stopping mediaMTX (PID: %d)...\n", pm->mediamtx_pid);
-    
-    // Send SIGTERM first (graceful shutdown).  SIGCHLD is SIG_IGN (see main.c),
-    // so children are auto-reaped and waitpid() would return ECHILD here — poll
-    // liveness with kill(pid, 0) instead (0 = alive, ESRCH = gone).
+
+    /* Send SIGTERM first (graceful shutdown).  SIGCHLD is SIG_IGN (see main.c),
+     * so children are auto-reaped and waitpid() would return ECHILD here — poll
+     * liveness with kill(pid, 0) instead (0 = alive, ESRCH = gone). */
     if (kill(pm->mediamtx_pid, SIGTERM) == 0)
     {
         // Wait up to 3 seconds for graceful exit
@@ -122,50 +123,48 @@ int pm_start_ffmpeg(ProcessManager *pm, const StreamingConfig *config)
         printf("[PM] FFmpeg is already running (PID: %d)\n", pm->ffmpeg_pid);
         return 0;
     }
-    
+
     printf("[PM] Starting FFmpeg stream...\n");
-    
+
     pid_t pid = fork();
-    
+
     if (pid < 0)
     {
         perror("[PM] fork failed for FFmpeg");
         return -1;
     }
-    
+
     if (pid == 0)
     {
         // Child process - exec FFmpeg
-        
-        // Redirect stdout/stderr to log file
-        freopen("/tmp/ffmpeg.log", "w", stdout);
-        freopen("/tmp/ffmpeg.log", "a", stderr);
-        
+
+        /* Redirect stdout/stderr to a log file. Return value deliberately
+         * ignored: forked child on its way to execl, nowhere to report to. */
+        (void)freopen("/tmp/ffmpeg.log", "w", stdout);
+        (void)freopen("/tmp/ffmpeg.log", "a", stderr);
+
         // Build RTSP URL
         char rtsp_url[256];
         snprintf(rtsp_url, sizeof(rtsp_url), "rtsp://localhost:%d/%s",
                  config->rtsp_port, config->rtsp_stream_name);
-        
+
         // Choose FFmpeg command based on input source type.
         if (config_is_fifo(config->video_path))
         {
-            // Live camera: picamera2 hardware encoder writes raw H.264 Annex-B to the
-            // FIFO at real-time rate.  FFmpeg just remuxes into RTSP — no re-encode,
-            // so CPU usage is minimal and latency is as low as possible.
-            // repeat=true in picamera2 ensures SPS/PPS precedes every IDR frame,
-            // so late-joining Android clients never see a green screen.
-            //
-            // -fflags +nobuffer keeps output latency low (no read-ahead before
-            // forwarding frames).  probesize/analyzeduration are NOT set tiny:
-            // raw H.264 carries no container header, so FFmpeg must read until it
-            // sees an SPS to learn the frame size.  With -probesize 32 /
-            // -analyzeduration 0 it frequently gave up first ("Could not find
-            // codec parameters ... unspecified size" → "Output file #0 does not
-            // contain any stream") and exited, which on reconnect cascaded into a
-            // dead stream.  These are upper bounds (FFmpeg stops as soon as it has
-            // the info), so they add no steady-state latency; 1 MB / 1 s is ample
-            // to capture the first SPS+IDR (SPS/PPS repeat before every IDR).
-            // Build the video framerate string from config
+            /* Live camera: the frame sender's x264enc writes raw H.264 Annex-B
+             * into the FIFO at real time. FFmpeg only remuxes into RTSP — no
+             * re-encode, so CPU is minimal and latency is as low as it gets.
+             * h264parse config-interval=1 on the sender side repeats SPS/PPS
+             * before every IDR, so late-joining clients never see a green screen.
+             *
+             * probesize/analyzeduration must NOT be tiny. Raw H.264 has no
+             * container header, so FFmpeg reads until it sees an SPS to learn the
+             * frame size; with tiny values it gives up first ("Could not find
+             * codec parameters ... unspecified size" → "Output file #0 does not
+             * contain any stream") and exits, which cascades into a dead stream on
+             * reconnect. They are upper bounds — FFmpeg stops as soon as it has
+             * the info — so they cost no steady-state latency.
+             * -fflags +nobuffer keeps output latency low. */
             char fps_str[16];
             snprintf(fps_str, sizeof(fps_str), "%.0f", config->video_fps > 0 ? config->video_fps : 30.0);
 
@@ -176,7 +175,7 @@ int pm_start_ffmpeg(ProcessManager *pm, const StreamingConfig *config)
                   "-use_wallclock_as_timestamps", "1",   // Stamp each packet with real wall-clock
                   "-r", fps_str,                         // Input frame rate (helps demuxer timing)
                   "-f", "h264",                          // Raw H.264 elementary stream
-                  "-i", config->video_path,              // Named pipe written by picamera2
+                  "-i", config->video_path,              // FIFO written by the sender's H.264 branch
                   "-c:v", "copy",                        // Remux only — no re-encode
                   "-an",
                   "-f", "rtsp",
@@ -229,19 +228,19 @@ int pm_start_ffmpeg(ProcessManager *pm, const StreamingConfig *config)
                   rtsp_url,                     // Output URL
                   (char *)NULL);
         }
-        
+
         // If exec fails
         perror("[PM] execl ffmpeg failed");
         _exit(127);
     }
-    
+
     // Parent process
     pm->ffmpeg_pid = pid;
     pm->ffmpeg_running = true;
-    
-    printf("[PM] FFmpeg started (PID: %d), streaming to RTSP port %d\n", 
+
+    printf("[PM] FFmpeg started (PID: %d), streaming to RTSP port %d\n",
            pm->ffmpeg_pid, config->rtsp_port);
-    
+
     return 0;
 }
 
@@ -251,12 +250,12 @@ void pm_stop_ffmpeg(ProcessManager *pm)
     {
         return;
     }
-    
+
     printf("[PM] Stopping FFmpeg (PID: %d)...\n", pm->ffmpeg_pid);
-    
-    // Send SIGTERM first.  SIGCHLD is SIG_IGN (see main.c), so children are
-    // auto-reaped and waitpid() would return ECHILD here — poll liveness with
-    // kill(pid, 0) instead (0 = alive, ESRCH = gone).
+
+    /* Send SIGTERM first.  SIGCHLD is SIG_IGN (see main.c), so children are
+     * auto-reaped and waitpid() would return ECHILD here — poll liveness with
+     * kill(pid, 0) instead (0 = alive, ESRCH = gone). */
     if (kill(pm->ffmpeg_pid, SIGTERM) == 0)
     {
         // Wait up to 2 seconds
@@ -293,10 +292,10 @@ bool pm_is_ffmpeg_running(ProcessManager *pm)
 
 void pm_check_processes(ProcessManager *pm)
 {
-    // SIGCHLD is SIG_IGN (see main.c), so children are auto-reaped and waitpid()
-    // can't be used to detect a self-exit (it returns ECHILD).  Probe liveness
-    // with kill(pid, 0): 0 means alive, ESRCH means the process is gone.  This
-    // means we can't recover the exit code/signal, only the fact of exit.
+    /* SIGCHLD is SIG_IGN (see main.c), so children are auto-reaped and waitpid()
+     * can't be used to detect a self-exit (it returns ECHILD).  Probe liveness
+     * with kill(pid, 0): 0 means alive, ESRCH means the process is gone.  This
+     * means we can't recover the exit code/signal, only the fact of exit. */
 
     // Check mediaMTX
     if (pm->mediamtx_pid > 0 && kill(pm->mediamtx_pid, 0) != 0 && errno == ESRCH)
@@ -325,35 +324,34 @@ void pm_cleanup(ProcessManager *pm)
 int pm_wait_for_mediamtx_ready(const StreamingConfig *config, int timeout_sec)
 {
     printf("[PM] Waiting for mediaMTX to be ready on port %d...\n", config->rtsp_port);
-    
-    int sock;
+
     struct sockaddr_in addr;
-    
+
     addr.sin_family = AF_INET;
     addr.sin_port = htons(config->rtsp_port);
     inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-    
+
     for (int i = 0; i < timeout_sec * 10; i++)
     {
-        sock = socket(AF_INET, SOCK_STREAM, 0);
+        int sock = socket(AF_INET, SOCK_STREAM, 0);
         if (sock < 0)
         {
             usleep(100000); // 100ms
             continue;
         }
-        
+
         int result = connect(sock, (struct sockaddr*)&addr, sizeof(addr));
         close(sock);
-        
+
         if (result == 0)
         {
             printf("[PM] mediaMTX is ready\n");
             return 0;
         }
-        
+
         usleep(100000); // 100ms
     }
-    
+
     fprintf(stderr, "[PM] Timeout waiting for mediaMTX\n");
     return -1;
 }

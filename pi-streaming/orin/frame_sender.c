@@ -87,7 +87,7 @@ static GstPadProbeReturn cap_probe_cb(GstPad *pad, GstPadProbeInfo *info,
         return GST_PAD_PROBE_OK;
     }
 
-    guint32 fid = (guint32)g_atomic_int_add(&s->next_fid, 1);  /* 1,2,3,... */
+    guint32 fid = (guint32)g_atomic_int_add(&s->next_fid, 1);
     if (s->parse != NULL)   /* no SEI consumer when the Orin branch is off */
     {
         g_async_queue_push(s->fid_queue, GUINT_TO_POINTER(fid)); /* fid >= 1 -> non-NULL */
@@ -241,8 +241,11 @@ void frame_sender_config_default(FrameSenderConfig *cfg)
     cfg->height        = 1080;
     cfg->fps           = 30;
     cfg->bitrate_kbps  = 20000;          /* spend bits on small-target detail  */
-    cfg->key_int_max   = 30;             /* ~1 s GOP at 30 fps                 */
-    cfg->speed_preset  = "superfast";    /* Pi 5 software-encode budget        */
+    cfg->key_int_max   = 30;             /* frames, NOT seconds - see below    */
+    cfg->speed_preset  = "superfast";
+    /* Both are library defaults only; src/main.c overrides them. keyint counts
+     * FRAMES: at the ~2.4-3.4 fps this software encode actually sustains,
+     * keyint=30 is a 9-12 s blind window for a mid-stream joiner. */
     cfg->x265_extra    = NULL;
     cfg->orin_branch   = true;
     cfg->sink          = FRAME_SENDER_SINK_RTP_UDP;
@@ -268,8 +271,8 @@ FrameSender *frame_sender_start(const FrameSenderConfig *cfg)
     s->user        = cfg->user;
 
     /* option-string carries x265 params the element has no property for.
-     * bframes=0 keeps strict frame order (so PTS matching holds); extra
-     * appended after. */
+     * bframes=0 keeps output 1:1 and in order, which is what keeps the
+     * frame_id FIFO aligned with the access units; extra appended after. */
     GString *opt = g_string_new("bframes=0");
     if (cfg->x265_extra && cfg->x265_extra[0])
     {
@@ -292,8 +295,8 @@ FrameSender *frame_sender_start(const FrameSenderConfig *cfg)
      *    arrives ~0.8 s into the segment (AGC warm-up); videorate gap-fills
      *    from t=0 with dozens of duplicate refs of the first camera buffer,
      *    parking libcamerasrc's tiny (~4) buffer pool behind the encoders and
-     *    stalling capture at <1 fps (measured). The caps filter alone holds
-     *    30 fps. */
+     *    stalling capture at <1 fps (measured). The caps filter alone is
+     *    enough to hold the source rate. */
     /* 1. Source head -> a normalised I420 WxH@fps stream (no cappoint here). */
     GString *p = g_string_new(NULL);
     if (cfg->source == FRAME_SENDER_SOURCE_VIDEOTEST)
@@ -345,7 +348,11 @@ FrameSender *frame_sender_start(const FrameSenderConfig *cfg)
     else
     {
         /* Single-branch mode (either encoder alone): no tee. cappoint still
-         * assigns frame_ids and fires the pose callback. */
+         * assigns frame_ids and fires the pose callback. NOTE: here cappoint
+         * sits BEFORE the leaky queue, the reverse of the dual-branch case
+         * above, so frame_ids get assigned to frames the queue may later drop.
+         * Harmless only because this mode has no SEI consumer; do not add one
+         * without moving cappoint after the queue. */
         g_string_append(p, " ! identity name=cappoint silent=true");
     }
 
@@ -428,13 +435,11 @@ FrameSender *frame_sender_start(const FrameSenderConfig *cfg)
     }
 
     GstPad *cap_pad = gst_element_get_static_pad(s->capture_point, "src");
-    /* Splice the SEI on h265parse's SINK pad (x265enc output, byte-stream/au),
-     * NOT its src pad. If we splice on the src pad, h265parse never re-validates
-     * our hand-inserted NAL and rtph265pay mis-parses the AU boundaries (it
-     * emitted a 1-byte NAL and garbage FUs -> no depayloader could reassemble
-     * the stream, even though the same bytes decode fine as an elementary
-     * stream). Splicing before h265parse lets it re-parse the SEI-carrying AU
-     * and hand correctly-framed NALs to the payloader. */
+    /* INVARIANT: splice the SEI on h265parse's SINK pad (x265enc output,
+     * byte-stream/au), never its src pad. Post-parse insertion is not
+     * re-validated, and rtph265pay then mis-frames the AU boundaries so no
+     * depayloader can reassemble the stream - even though the same bytes decode
+     * fine as an elementary stream. */
     s->cap_probe_id = gst_pad_add_probe(cap_pad, GST_PAD_PROBE_TYPE_BUFFER,
                                         cap_probe_cb, s, NULL);
     gst_object_unref(cap_pad);

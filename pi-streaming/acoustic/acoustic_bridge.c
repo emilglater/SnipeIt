@@ -2,8 +2,7 @@
  * acoustic_bridge.c
  *
  * Adapter that wires the SnipeIt acoustic detection pipeline into the
- * pi-streaming binary's WebSocketServer. Replaces the standalone
- * main_realtime.c entry point.
+ * pi-streaming binary's WebSocketServer.
  *
  * Pattern mirrors ddl_bridge.c:
  *   - acoustic_bridge_start(ws) brings up the capture pipeline
@@ -125,7 +124,8 @@ int acoustic_bridge_tick(AcousticBridge* b)
         return 0;
     }
 
-    /* Atomically claim the pending event */
+    /* Claim the pending event. The flag is set on the capture thread and
+     * read+cleared here on the main thread. */
     b->event_pending = 0;
     const uint64_t timestamp_us = b->event_timestamp;
 
@@ -143,6 +143,10 @@ int acoustic_bridge_tick(AcousticBridge* b)
         return 0;
     }
 
+    /* Trailing window: this returns the most recent SNAPSHOT_FRAMES frames as
+     * of right now on the main thread, not a window centred on the onset. That
+     * is 85 ms at 48 kHz, and the onset fired on the capture thread one tick
+     * (~20 ms) earlier -- see the main loop pacing note in src/main.c. */
     int frames_got = ring_buffer_snapshot(b->rb, snapshot, SNAPSHOT_FRAMES);
     if (frames_got < SNAPSHOT_FRAMES / 2)
     {
@@ -150,14 +154,15 @@ int acoustic_bridge_tick(AcousticBridge* b)
         return 0;
     }
 
-    /* GCC-PHAT across all microphone pairs */
     gcc_phat_compute_all_pairs(b->gcc_ws, snapshot, frames_got, SAMPLE_RATE);
 
-    /* SRP-PHAT to find best azimuth */
     srp_phat_result_t srp_result;
     srp_phat_estimate(b->gcc_ws, snapshot, frames_got, SAMPLE_RATE, &srp_result);
 
-    /* Peak amplitude and rough duration from the snapshot */
+    /* Peak amplitude, plus a crude duration: this counts every sample over
+     * amp_thresh across all channels and divides by the channel count, so it is
+     * the TOTAL time spent above threshold, not a contiguous event length.
+     * Three spaced shots and one long reverberant tail give the same number. */
     float peak_amp = 0.0f;
     int   above_thresh = 0;
     const float amp_thresh = 0.05f;
@@ -172,8 +177,8 @@ int acoustic_bridge_tick(AcousticBridge* b)
 
     const int valid = (srp_result.confidence > 0.3f && peak_amp > 0.05f) ? 1 : 0;
 
-    /* Build event JSON. Keep format identical to ws_reporter_send_event so the
-     * Android app sees the same payload it would have from the standalone build. */
+    /* Build event JSON. The Android app parses these key names directly -- do
+     * not rename or reorder fields without a matching change on the app side. */
     char json[512];
     const int n = snprintf(json, sizeof(json),
         "{"

@@ -11,9 +11,9 @@
  *     extension would have to be preserved by every hop.
  *   - It is codec-standard (Rec. ITU-T H.265, user_data_unregistered,
  *     payloadType 5), so the Orin can read it with any HEVC parser.
- *   - On this Pi (Pi 5: software libx265 via FFmpeg, no HW encoder) we cannot
- *     inject per-frame SEI from the FFmpeg CLI, so the sender prepends this SEI
- *     NAL to each access unit at the bitstream level before the muxer/RTP.
+ *   - This Pi (Pi 5) has no hardware encoder and no encoder-level hook for
+ *     per-frame SEI, so the sender splices this NAL into the bitstream itself,
+ *     on a GStreamer pad probe between x265enc and h265parse.
  *
  * Wire detail:
  *   Annex-B prefix-SEI NAL (nal_unit_type 39), payloadType 5
@@ -45,26 +45,30 @@
 #define SEI_FRAME_ID_MAX_BYTES 48
 
 /**
- * sei_frame_id_encode - Build an Annex-B prefix-SEI NAL carrying frame_id.
+ * @brief Build an Annex-B prefix-SEI NAL carrying frame_id.
  *
- * @frame_id: The id to embed.
- * @out:      Destination buffer.
- * @cap:      Capacity of out (use SEI_FRAME_ID_MAX_BYTES).
+ * @param frame_id The id to embed.
+ * @param out      Destination buffer.
+ * @param cap      Capacity of @p out (use SEI_FRAME_ID_MAX_BYTES).
  *
- * Returns the number of bytes written (including the 4-byte start code), or
- * -1 if cap is too small. Prepend the result to the frame's access unit.
+ * @details Prepend the result to the frame's access unit.
+ *
+ * @returns The number of bytes written (including the 4-byte start code), or
+ *          -1 if @p cap is too small.
  */
 int sei_frame_id_encode(uint32_t frame_id, uint8_t *out, size_t cap);
 
 /**
- * sei_frame_id_parse - Find our SEI in an Annex-B stream and read frame_id.
+ * @brief Find our SEI in an Annex-B stream and read frame_id.
  *
- * @data:           Annex-B byte stream (one or more NALs).
- * @len:            Length of data.
- * @frame_id_out:   Filled with the recovered id on success.
+ * @param data         Annex-B byte stream (one or more NALs).
+ * @param len          Length of @p data.
+ * @param frame_id_out Filled with the recovered id on success.
  *
- * Returns true if a matching SEI (correct UUID) was found, false otherwise.
- * Scans all NALs and returns the first match. Mirrors what the Orin does.
+ * @details Scans all NALs and returns the first match. Mirrors what the Orin
+ *          does.
+ *
+ * @returns true if a matching SEI (correct UUID) was found, false otherwise.
  */
 bool sei_frame_id_parse(const uint8_t *data, size_t len, uint32_t *frame_id_out);
 

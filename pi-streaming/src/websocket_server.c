@@ -17,8 +17,7 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
 {
     SessionData *session = (SessionData *)user;
     WebSocketServer *ws = NULL;
-    
-    // Get server reference from protocol user data
+
     if (wsi)
     {
         const struct lws_protocols *protocol = lws_get_protocol(wsi);
@@ -27,40 +26,40 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
             ws = (WebSocketServer *)protocol->user;
         }
     }
-    
+
     switch (reason)
     {
         case LWS_CALLBACK_PROTOCOL_INIT:
             printf("[WS] Protocol initialized\n");
             break;
-            
+
         case LWS_CALLBACK_ESTABLISHED:
             printf("[WS] Client connected\n");
             if (ws)
             {
-                // Single-client app.  If a client is still registered when a new
-                // one arrives, it is almost always a stale half-open socket from
-                // the same Android app reconnecting before libwebsockets has
-                // detected the old TCP close.  Rejecting the new connection here
-                // was the cause of intermittent black screens: on_connect never
-                // fired, so FFmpeg was never (re)started.  Instead, evict the old
-                // client and let the new one take over.
+                /* Single-client app. A second connection while one is
+                 * registered is almost always a stale half-open socket from the
+                 * same app reconnecting before lws noticed the TCP close.
+                 * INVARIANT: never reject the new connection — evict the old one
+                 * and let the new one take over. Rejecting means on_connect never
+                 * fires, and the app is left with no stream_ready. */
                 if (ws->client_connected && ws->client_wsi && ws->client_wsi != wsi)
                 {
                     struct lws *old_wsi = ws->client_wsi;
                     printf("[WS] Existing client present - evicting it for the new connection\n");
 
-                    // Detach the old client from server state *before* tearing
-                    // down, so the old socket's eventual CLOSED callback is a
-                    // no-op (it's guarded by client_wsi == wsi).
+                    /* Detach the old client from server state *before* tearing
+                     * down, so the old socket's eventual CLOSED callback is a
+                     * no-op (it's guarded by client_wsi == wsi). */
                     ws->client_wsi = NULL;
                     ws->client_connected = false;
                     ws->queue_head = 0;
                     ws->queue_tail = 0;
                     ws->queue_count = 0;
 
-                    // Tear down the old streaming session (stop FFmpeg, STOP to
-                    // Python) so the new connection starts a clean stream.
+                    /* Fire the disconnect callback for the old client so app
+                     * state stays consistent. It does NOT tear down the camera
+                     * pipeline — that stays up for the whole session. */
                     if (ws->on_disconnect)
                     {
                         ws->on_disconnect(ws->callback_user_data);
@@ -73,20 +72,18 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 ws->client_wsi = wsi;
                 ws->client_connected = true;
 
-                // Store server reference in session
                 if (session)
                 {
                     session->server = ws;
                 }
 
-                // Call user callback
                 if (ws->on_connect)
                 {
                     ws->on_connect(ws->callback_user_data);
                 }
             }
             break;
-            
+
         case LWS_CALLBACK_CLOSED:
             printf("[WS] Client disconnected\n");
             if (ws && ws->client_wsi == wsi)
@@ -99,18 +96,16 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 ws->queue_tail = 0;
                 ws->queue_count = 0;
 
-                // Call user callback
                 if (ws->on_disconnect)
                 {
                     ws->on_disconnect(ws->callback_user_data);
                 }
             }
             break;
-            
+
         case LWS_CALLBACK_SERVER_WRITEABLE:
             if (ws && ws->queue_count > 0)
             {
-                // Get message from queue
                 WsQueuedMessage *msg = &ws->queue[ws->queue_tail];
 
                 // Prepare buffer with LWS_PRE padding
@@ -124,7 +119,6 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
 
                 memcpy(&buf[LWS_PRE], msg->data, msg_len);
 
-                // Send as text message
                 int written = lws_write(wsi, &buf[LWS_PRE], msg_len, LWS_WRITE_TEXT);
 
                 if (written < (int)msg_len)
@@ -133,32 +127,30 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
                             written, msg_len);
                 }
 
-                // Remove message from queue
                 ws->queue_tail = (ws->queue_tail + 1) % WS_QUEUE_SIZE;
                 ws->queue_count--;
 
-                // If more messages in queue, request another callback
                 if (ws->queue_count > 0)
                 {
                     lws_callback_on_writable(wsi);
                 }
             }
             break;
-            
+
         case LWS_CALLBACK_RECEIVE:
             if (ws && ws->on_command && in && len > 0)
             {
-                // Command frames are small (<256B) and fit in a single WS
-                // frame. If you ever send larger payloads you'd reassemble
-                // here with lws_is_final_fragment() before dispatching.
+                /* Command frames are small (<256B) and fit in a single WS
+                 * frame. If you ever send larger payloads you'd reassemble
+                 * here with lws_is_final_fragment() before dispatching. */
                 ws->on_command((const char *)in, len, ws->callback_user_data);
             }
             break;
-            
+
         default:
             break;
     }
-    
+
     return 0;
 }
 
@@ -193,41 +185,36 @@ int ws_init(WebSocketServer *ws, int port)
         .queue_dropped = 0
     };
 
-    // Allocate message queue
     ws->queue = (WsQueuedMessage *)calloc(WS_QUEUE_SIZE, sizeof(WsQueuedMessage));
     if (!ws->queue)
     {
         fprintf(stderr, "[WS] Failed to allocate message queue\n");
         return -1;
     }
-    
-    // Set protocol user data to point to our server struct
+
     protocols[0].user = ws;
-    
-    // Configure libwebsockets
+
     struct lws_context_creation_info info;
     memset(&info, 0, sizeof(info));
-    
+
     info.port = port;
     info.protocols = protocols;
     info.gid = -1;
     info.uid = -1;
     info.options = LWS_SERVER_OPTION_VALIDATE_UTF8;
-    
-    // Reduce logging verbosity
+
     lws_set_log_level(LLL_ERR | LLL_WARN, NULL);
-    
-    // Create context
+
     ws->context = lws_create_context(&info);
     if (!ws->context)
     {
         fprintf(stderr, "[WS] Failed to create libwebsockets context\n");
         return -1;
     }
-    
+
     ws->running = true;
     printf("[WS] WebSocket server listening on port %d\n", port);
-    
+
     return 0;
 }
 
@@ -252,7 +239,7 @@ int ws_service(WebSocketServer *ws, int timeout_ms)
     {
         return -1;
     }
-    
+
     return lws_service(ws->context, timeout_ms);
 }
 
@@ -275,16 +262,14 @@ static int ws_queue_message(WebSocketServer *ws, const char *data, size_t len)
         return -1;
     }
 
-    // Check if queue is full
     if (ws->queue_count >= WS_QUEUE_SIZE)
     {
-        // Drop oldest message to make room (or could drop this new one)
+        // Queue full: drop the oldest so the client gets the freshest data
         ws->queue_tail = (ws->queue_tail + 1) % WS_QUEUE_SIZE;
         ws->queue_count--;
         ws->queue_dropped++;
     }
 
-    // Add to queue
     WsQueuedMessage *msg = &ws->queue[ws->queue_head];
     memcpy(msg->data, data, len);
     msg->len = len;
@@ -292,7 +277,6 @@ static int ws_queue_message(WebSocketServer *ws, const char *data, size_t len)
     ws->queue_head = (ws->queue_head + 1) % WS_QUEUE_SIZE;
     ws->queue_count++;
 
-    // Request callback to send (if not already requested)
     lws_callback_on_writable(ws->client_wsi);
 
     return 0;
@@ -308,15 +292,6 @@ int ws_send_json(WebSocketServer *ws, const char *json, size_t len)
     return ws_queue_message(ws, json, len);
 }
 
-int ws_get_poll_fd(WebSocketServer *ws)
-{
-    // libwebsockets manages its own event loop internally
-    // For integration with external poll(), we'd need to use
-    // the external poll API, which is more complex.
-    // For now, return -1 to indicate we use lws_service() instead.
-    (void)ws;
-    return -1;
-}
 
 void ws_cleanup(WebSocketServer *ws)
 {
@@ -326,14 +301,12 @@ void ws_cleanup(WebSocketServer *ws)
         ws->context = NULL;
     }
 
-    // Free message queue
     if (ws->queue)
     {
         free(ws->queue);
         ws->queue = NULL;
     }
 
-    // Report dropped messages if any
     if (ws->queue_dropped > 0)
     {
         printf("[WS] Warning: %d messages were dropped due to full queue\n", ws->queue_dropped);

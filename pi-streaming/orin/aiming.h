@@ -2,8 +2,8 @@
  * aiming.h
  *
  * Geometry for the Pi-side lock-on: turn a detection bounding box plus the
- * capture-time servo pose into an absolute pan/tilt command (and, as a bonus,
- * a range estimate). This is the body the Orin-receiver callback hands off to.
+ * capture-time servo pose into an absolute pan/tilt command, plus a range
+ * estimate. The Orin-receiver callback calls into here.
  *
  * Pipeline position:
  *   detection (bbox, frame_id) --[receiver]--> join frame_id -> capture pose
@@ -17,13 +17,14 @@
  *
  * IMPORTANT — two values that must match the rest of the system:
  *   1. (frame_w, frame_h) is the pixel coordinate space the *bbox* lives in.
- *      The Orin must return boxes in this same space. Recommended contract:
- *      the full 1920x1080 source-frame coordinates (un-letterboxed), matching
- *      what person_streamer.py already does when it rescales lores->main.
+ *      The Orin MUST return boxes in this same space: full 1920x1080
+ *      source-frame pixels, with the detector's letterbox already reversed.
+ *      This is a hard contract, not a preference - aim_compute() and the
+ *      app-facing JSON in ddl_bridge.c both assume it.
  *   2. (hfov_deg, vfov_deg) must be the FOV of THAT frame — i.e. the effective
- *      FOV after the sensor crop the 1080p path uses. Confirm with
- *      orin/probe_camera_fov.py on the live camera; the defaults below are
- *      provisional (see aiming.c).
+ *      FOV after the sensor crop the 1080p path uses. The defaults were
+ *      measured on this rig with script/probe_camera_fov.py; see aiming.c for
+ *      the measurement and when to re-run it.
  */
 
 #ifndef ORIN_AIMING_H
@@ -64,27 +65,35 @@ typedef struct
 } AimSolution;
 
 /**
- * aim_config_default - Fill cfg with the project defaults.
+ * @brief Fill cfg with the project defaults.
  *
- * FOV defaults are PROVISIONAL (full-FOV sensor mode + 16:9 crop reasoning);
- * confirm with probe_camera_fov.py. Frame defaults to 1920x1080. Servo limits
- * default to the SERVO_*_{MIN,MAX}_ANGLE_DEG values. Signs default to a common
- * mounting and MUST be verified against the rig (see header).
+ * @param cfg Configuration to populate. May be NULL (no-op).
+ *
+ * @details FOV defaults are MEASURED on this rig (IMX477 + 16 mm; see aiming.c
+ *          for the date and the arithmetic). Frame defaults to 1920x1080.
+ *          Servo limits come from the SERVO_*_{MIN,MAX}_ANGLE_DEG values. Both
+ *          signs are verified against the rig; re-verify with a manual jog
+ *          whenever a servo axis is remounted.
  */
 void aim_config_default(AimConfig *cfg);
 
 /**
- * aim_compute - Bounding box + capture pose -> absolute servo command.
+ * @brief Bounding box + capture pose -> absolute servo command.
  *
- * @cfg:              Optics / frame / limits configuration.
- * @bbox_x,_y,_w,_h:  Box in the cfg->frame_w x cfg->frame_h pixel space
- *                    (top-left origin, +x right, +y down). Width/height > 0.
- * @capture_pan_deg:  Servo pan at the instant the frame was captured.
- * @capture_tilt_deg: Servo tilt at capture.
- * @out:              Filled on success.
+ * @param cfg              Optics / frame / limits configuration.
+ * @param bbox_x           Box left edge, in the cfg->frame_w x cfg->frame_h
+ *                         pixel space (top-left origin, +x right, +y down).
+ * @param bbox_y           Box top edge, same space.
+ * @param bbox_w           Box width in pixels (> 0).
+ * @param bbox_h           Box height in pixels (> 0).
+ * @param capture_pan_deg  Servo pan at the instant the frame was captured.
+ * @param capture_tilt_deg Servo tilt at capture.
+ * @param out              Filled on success.
  *
- * Returns false on bad arguments (NULL, non-positive frame/box dims), true
- * otherwise. A clamped solution still returns true with out->clamped set.
+ * @details A clamped solution still returns true, with out->clamped set.
+ *
+ * @returns false on bad arguments (NULL, non-positive frame/box dims), true
+ *          otherwise.
  */
 bool aim_compute(const AimConfig *cfg,
                  int bbox_x, int bbox_y, int bbox_w, int bbox_h,
@@ -92,18 +101,19 @@ bool aim_compute(const AimConfig *cfg,
                  AimSolution *out);
 
 /**
- * aim_estimate_distance_m - Range from box height and known target height.
+ * @brief Range from box height and known target height.
  *
- * Uses the same rectilinear model:
- *   D = (target_height_m * frame_h) / (2 * bbox_h * tan(VFOV/2))
- * Distance is NOT a detector output; it is computed here from geometry, so it
- * is only as good as target_height_m and the VFOV calibration.
+ * @param cfg             Configuration (uses vfov_deg and frame_h).
+ * @param bbox_h          Box height in pixels (> 0).
+ * @param target_height_m Known real-world target height in metres (> 0).
  *
- * @cfg:                Configuration (uses vfov_deg and frame_h).
- * @bbox_h:             Box height in pixels (> 0).
- * @target_height_m:    Known real-world target height in metres (> 0).
+ * @details Uses the same rectilinear model:
+ *          D = (target_height_m * frame_h) / (2 * bbox_h * tan(VFOV/2))
+ *          Distance is NOT a detector output; it is computed here from
+ *          geometry, so it is only as good as target_height_m and the VFOV
+ *          calibration.
  *
- * Returns the distance in metres, or -1.0f on bad arguments.
+ * @returns The distance in metres, or -1.0f on bad arguments.
  */
 float aim_estimate_distance_m(const AimConfig *cfg, int bbox_h,
                               float target_height_m);

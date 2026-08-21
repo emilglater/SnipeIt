@@ -132,10 +132,10 @@ static void* io_completion_thread(void* arg)
             if(slot->is_read && cqe->res > 0 && slot->bytes_done < slot->total_len)
             {
                 /* Short read. The tty is configured with VMIN=1 so a
-                 * single io_uring_read can return as soon as ≥1 byte
+                 * single io_uring_read can return as soon as >=1 byte
                  * is available, even when more was asked for. Submit
                  * another read for the remainder against the same
-                 * slot; the user callback fires only when the buffer
+                 * slot - the user callback fires only when the buffer
                  * is fully populated. */
                 struct io_uring_sqe* sqe = io_uring_get_sqe(&uart_ring);
                 if(sqe != NULL)
@@ -150,7 +150,7 @@ static void* io_completion_thread(void* arg)
                 }
                 else
                 {
-                    /* Submission queue full — can't chain. Drop the
+                    /* Submission queue full - can't chain. Drop the
                      * operation; the FSM's read timer will fire. */
                     free_slot(slot);
                 }

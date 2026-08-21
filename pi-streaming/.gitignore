@@ -2,22 +2,15 @@
 mediamtx
 mediamtx_*.tar.gz
 
-# Compiled binaries
-test_ipc
-streaming_server
-orin_live_loop
-orin_rtp_stream
-orin_sei_capture
-orin_sender_demo
-test_aiming
-test_detection_msg
-test_orin_receiver
-test_pose_ring
-test_sei_frame_id
-test_tracker
-
 # Logs
 *.log
+
+# Cross-team handoff notes (Pi <-> Orin <-> app). Working correspondence, not
+# project documentation; the durable content belongs in the architecture docs.
+notes/
+
+# Local Claude Code guidance for this directory. Deliberately untracked.
+CLAUDE.md
 
 # Test videos
 *.mp4
@@ -29,3 +22,12 @@ test_tracker
 # Python cache
 __pycache__/
 *.pyc
+
+# Build output directories
+build/
+bin/
+
+# Developer tooling: clangd's compile database and background index. Regenerate
+# the database with: bear --output compile_commands.json -- make all
+compile_commands.json
+.cache/

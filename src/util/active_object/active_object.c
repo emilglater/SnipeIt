@@ -29,7 +29,6 @@ static void* active_entry(void* arg)
         (void)util_fsm_send_event(&active_object->active_fsm, event);
     }
 
-    /* ---- NOT REACHABLE ---- */
     return NULL;
 }
 

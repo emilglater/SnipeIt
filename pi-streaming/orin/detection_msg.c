@@ -2,15 +2,13 @@
  * detection_msg.c
  *
  * A small recursive-descent JSON scanner specialised to the Orin detection
- * schema (see detection_msg.h). The codebase hand-rolls JSON elsewhere
- * (ddl_bridge.c, config.c); this is the same spirit but handles the nested
- * detections array.
+ * schema (see detection_msg.h). ddl_bridge.c and config.c hand-roll JSON the
+ * same way; this one also handles the nested detections array.
  *
  * The scanner is cursor-based and never reads past [json, json+len). Unknown
- * keys are skipped generically, so the Orin can add fields without breaking
- * the Pi. The input is trusted (our own producer over a direct link) but the
- * parser is written to fail closed — it returns false rather than misbehave on
- * malformed input.
+ * keys are skipped, so the Orin can add fields without breaking the Pi. The
+ * input is trusted (our own producer, direct link), but bad input returns
+ * false rather than reading garbage.
  */
 
 #include "detection_msg.h"
@@ -77,8 +75,9 @@ static bool parse_string(Cur *c, char *out, size_t cap)
                 case 'b': ch = '\b'; break;
                 case 'f': ch = '\f'; break;
                 case 'u':
-                    /* Skip the 4 hex digits; emit a placeholder. Our schema
-                     * never carries non-ASCII, so this is belt-and-braces. */
+                    /* Skip the 4 hex digits, emit '?'. Our schema is
+                     * ASCII-only, so this exists only so a stray \u cannot
+                     * desync the cursor. */
                     for (int k = 0; k < 4 && c->p < c->end; k++) c->p++;
                     ch = '?';
                     break;

@@ -2,10 +2,20 @@
     "configurations": [
         {
             "name": "Linux",
+            "compileCommands": "${workspaceFolder}/pi-streaming/compile_commands.json",
             "includePath": [
+                "${workspaceFolder}/src/**",
+                "${workspaceFolder}/pi-streaming/src/**",
+                "${workspaceFolder}/pi-streaming/orin/**",
+                "${workspaceFolder}/pi-streaming/acoustic/**",
+                "/usr/include/gstreamer-1.0",
+                "/usr/include/glib-2.0",
+                "/usr/lib/aarch64-linux-gnu/glib-2.0/include",
                 "${workspaceFolder}/**"
             ],
-            "defines": [],
+            "defines": [
+                "_GNU_SOURCE"
+            ],
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "gnu17",
             "cppStandard": "gnu++17",

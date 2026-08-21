@@ -1,0 +1,12 @@
+{
+    "video_path": "/tmp/camera_stream.h264",
+    "mediamtx_path": "./mediamtx",
+    "mediamtx_config": "./config/mediamtx.yml",
+    "websocket_port": 8555,
+    "rtsp_port": 8554,
+    "rtsp_stream_name": "stream",
+    "loop_video": false,
+    "camera_source": "test",
+    "orin_host": "10.42.0.2",
+    "orin_rtp_port": 5600
+}

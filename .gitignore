@@ -7,6 +7,9 @@ videos/
 # Ignore VSCode settings folder
 .vscode/
 
+# Ignore Claude Code settings folder (local developer tooling)
+.claude/
+
 # Ignore build output folders
 build/
 bin/

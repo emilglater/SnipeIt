@@ -2,7 +2,7 @@
  * tracker.c
  *
  * Greedy nearest-neighbour tracker in motion-compensated angular space.
- * See tracker.h and TRACKER_DESIGN.md.
+ * See tracker.h for the design rationale.
  */
 
 #include "tracker.h"
@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ---- Tunables (see TRACKER_DESIGN.md) ------------------------------------ */
+/* ---- Tunables ------------------------------------------------------------ */
 #define GATE_MIN_DEG   2.0f    /* minimum association gate (degrees)           */
 #define GATE_K         1.5f    /* gate also scales with target angular width   */
 #define MAX_COAST_MS   1500u   /* delete a track unseen for this long          */
@@ -28,12 +28,12 @@ typedef struct
     char     cls[ORIN_CLASS_MAXLEN];
     float    pan;            /* smoothed world bearing, degrees                */
     float    tilt;
-    /* EXTENSION POINT: to lead fast slews, add a constant-velocity term here
-     *   float vpan, vtilt;  // deg/s, estimated from (new-old)/dt
-     * and predict `pan += vpan*dt` before gating in tracker_update(). Only add
-     * if measurement shows a target moving more than the gate between frames
-     * during a hard slew — greedy-NN without prediction handles ~5-7 fps + the
-     * scan's mini-scan pauses fine. This is a local change, not a rewrite. */
+    /* EXTENSION POINT: to lead fast slews, add `float vpan, vtilt` (deg/s from
+     * (new-old)/dt) and predict `pan += vpan*dt` before gating. Local change,
+     * not a rewrite. Only worth it if measurement shows a target crossing more
+     * than the gate between two consecutive detections - at the ~2.4-3.4 fps
+     * the Orin round trip actually delivers, that is plausible during a hard
+     * slew, so measure before assuming plain greedy-NN is enough. */
     float    ang_w;          /* last angular width, degrees (for gating)       */
     int      hits;
     uint64_t last_seen_ms;
@@ -124,13 +124,20 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
         return;
     }
 
+    /* Time base is the frame's CAPTURE timestamp, not wall clock, so coasting
+     * is measured in capture time. Messages are expected in capture order
+     * (ZeroMQ PUSH/PULL over TCP preserves it), but the coast check at the
+     * bottom guards the comparison anyway: unguarded, one out-of-order message
+     * would wrap the unsigned subtraction and delete every unmatched track. */
     const uint64_t now = pose->capture_ts_ms;
     const int      nd  = (msg->num_detections < ORIN_MAX_DETECTIONS)
                             ? msg->num_detections : ORIN_MAX_DETECTIONS;
 
-    float dp[ORIN_MAX_DETECTIONS];   /* detection bearings + width */
-    float dt[ORIN_MAX_DETECTIONS];
-    float dw[ORIN_MAX_DETECTIONS];
+    /* Only [0, nd) is written or read; zeroed anyway so static analysis
+     * needn't prove it. */
+    float dp[ORIN_MAX_DETECTIONS] = {0};   /* detection bearings + width */
+    float dt[ORIN_MAX_DETECTIONS] = {0};
+    float dw[ORIN_MAX_DETECTIONS] = {0};
     bool  det_taken[ORIN_MAX_DETECTIONS];
     bool  trk_matched[TRACKER_MAX_TRACKS];
 
@@ -171,7 +178,8 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
                 }
             }
         }
-        if (bi < 0) break;
+        /* bi and bk are assigned together; testing both states that. */
+        if (bi < 0 || bk < 0) break;
 
         Track *tr = &t->tracks[bk];
         tr->pan  += BEARING_ALPHA * (dp[bi] - tr->pan);
@@ -204,11 +212,14 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
         out_confirmed[i] = (tr->hits >= N_INIT);   /* false at hits==1 */
     }
 
-    /* Coast/delete tracks not seen this frame that have aged out. */
+    /* Coast/delete tracks not seen this frame that have aged out. The
+     * now >= last_seen_ms test keeps an out-of-order (older) capture time
+     * from wrapping the unsigned subtraction into a delete-everything. */
     for (int k = 0; k < TRACKER_MAX_TRACKS; k++)
     {
         Track *tr = &t->tracks[k];
-        if (tr->used && !trk_matched[k] && (now - tr->last_seen_ms) > MAX_COAST_MS)
+        if (tr->used && !trk_matched[k] &&
+            now >= tr->last_seen_ms && (now - tr->last_seen_ms) > MAX_COAST_MS)
         {
             tr->used = false;
         }

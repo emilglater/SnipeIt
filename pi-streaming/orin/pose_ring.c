@@ -96,9 +96,10 @@ bool pose_ring_lookup(PoseRing *r, uint32_t frame_id, PoseEntry *out)
         int idx = (r->write_pos - 1 - i + r->capacity) % r->capacity;
         const PoseEntry *e = &r->entries[idx];
 
-        /* A never-written slot has capture_ts_ms == 0 (calloc'd) and frame_id
-         * 0; skip it so a real frame_id of 0 still matches a written entry but
-         * an empty buffer slot never spuriously matches frame_id 0. */
+        /* Empty-slot sentinel: calloc leaves capture_ts_ms == 0, so skip those
+         * rather than let an unwritten slot match frame_id 0. Assumes no real
+         * capture ever timestamps at exactly 0 - true for CLOCK_MONOTONIC ms,
+         * which is uptime-based and non-zero by the time capture starts. */
         if (e->capture_ts_ms == 0)
         {
             continue;

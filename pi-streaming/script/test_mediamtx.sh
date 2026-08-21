@@ -6,7 +6,7 @@
 set -e  # Exit on error
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/.."   # run from pi-streaming/, where the mediamtx binary lives
 
 echo "=========================================="
 echo "  mediaMTX Installation Test"
@@ -28,7 +28,7 @@ fi
 # Check if config file exists
 echo ""
 echo "[2/5] Checking configuration file..."
-if [ -f "./mediamtx.yml" ]; then
+if [ -f "./config/mediamtx.yml" ]; then
     echo "  ✓ mediamtx.yml found"
 else
     echo "  ✗ mediamtx.yml not found!"
@@ -61,7 +61,7 @@ fi
 # Test starting mediaMTX
 echo ""
 echo "[5/5] Testing mediaMTX startup..."
-./mediamtx ./mediamtx.yml &
+./mediamtx ./config/mediamtx.yml &
 MEDIAMTX_PID=$!
 sleep 3
 
@@ -96,7 +96,7 @@ echo ""
 echo "To test video streaming manually:"
 echo ""
 echo "  Terminal 1 - Start mediaMTX:"
-echo "    ./mediamtx ./mediamtx.yml"
+echo "    ./mediamtx ./config/mediamtx.yml"
 echo ""
 echo "  Terminal 2 - Stream a test video:"
 echo "    ffmpeg -re -f lavfi -i testsrc=duration=60:size=640x480:rate=30 \\"

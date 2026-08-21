@@ -16,15 +16,10 @@
  *    positive theta is to the right (+X), matching the coordinate
  *    system defined in acoustic_config.h.
  *
- * 2. The SRP-PHAT power at each candidate angle is computed by
- *    summing the GCC-PHAT correlation values at the expected delays
- *    for all microphone pairs. We use linear interpolation between
- *    the two nearest correlation bins for smooth power variation.
- *
- * 3. Confidence is based on the ratio of the second-highest peak
- *    to the highest peak in the angular power spectrum. If there is
- *    a clear single peak, confidence is high. If multipath or noise
- *    creates multiple comparable peaks, confidence drops.
+ * 2. The power at each candidate angle sums, over all microphone pairs, a
+ *    Gaussian kernel scoring the expected TDOA against that pair's measured
+ *    TDOA, weighted by the pair's GCC-PHAT peak value. This is a reduced form
+ *    of SRP-PHAT -- see srp_phat.h and the note in srp_phat_estimate().
  */
 
 #include <stdlib.h>
@@ -79,20 +74,25 @@ void srp_phat_estimate(const gcc_phat_workspace_t *gcc_ws,
 
     /*
      * Sweep over candidate azimuths from AZIMUTH_MIN_DEG to AZIMUTH_MAX_DEG.
+     * theta accumulates in float. Exact at the current step of 1.0, since
+     * -90.0, 1.0 and 90.0 are all exactly representable; a step that is not a
+     * power of two can drift and drop the final angle.
      */
     int num_angles = 0;
     float best_power = -1e30f;
     float second_best_power = -1e30f;
     float best_azimuth = 0.0f;
 
-    for (float theta = AZIMUTH_MIN_DEG; theta <= AZIMUTH_MAX_DEG; theta += AZIMUTH_STEP_DEG) {
+    for (float theta = AZIMUTH_MIN_DEG; theta <= AZIMUTH_MAX_DEG; theta += AZIMUTH_STEP_DEG)
+    {
         float power = 0.0f;
 
         /*
          * For each microphone pair, compute the expected TDOA at this
          * azimuth, convert to samples, and look up the correlation value.
          */
-        for (int p = 0; p < gcc_ws->num_pairs; p++) {
+        for (int p = 0; p < gcc_ws->num_pairs; p++)
+        {
             int mic_i = gcc_ws->pair_indices[p][0];
             int mic_j = gcc_ws->pair_indices[p][1];
 
@@ -102,26 +102,16 @@ void srp_phat_estimate(const gcc_phat_workspace_t *gcc_ws,
             float expected_delay_samples = expected_tdoa * (float)sample_rate;
 
             /*
-             * Look up the GCC-PHAT correlation value at this expected delay.
-             *
-             * We use the raw correlation buffer from the most recent
-             * gcc_phat_compute_pair call. Since gcc_phat_compute_all_pairs
-             * processes pairs sequentially and reuses the correlation buffer,
-             * we need to recompute the correlation for each pair here.
-             *
-             * OPTIMIZATION NOTE: In a production implementation, you would
-             * store the full correlation buffer for each pair. For clarity
-             * and simplicity, we instead use the TDOA results directly.
-             *
-             * Alternative approach (used here): Instead of looking up the
-             * full correlation, approximate the SRP-PHAT power using a
-             * Gaussian kernel centered on the measured TDOA:
+             * Score the expected delay against this pair's measured TDOA with
+             * a Gaussian kernel:
              *
              *   power += exp(-0.5 * ((expected_delay - measured_delay) / sigma)^2)
              *
-             * This is mathematically equivalent to SRP-PHAT when the
-             * correlation peaks are well-defined, and avoids the need to
-             * store all correlation buffers.
+             * True SRP-PHAT would look up the correlation function itself at
+             * expected_delay, but gcc_phat_compute_all_pairs reuses one
+             * correlation buffer across pairs, so only the last pair's survives
+             * -- we have each pair's argmax and peak value, not its curve. This
+             * matches SRP-PHAT closely when each pair's peak is clean.
              */
             float measured_tdoa_samples = gcc_ws->tdoa_results[p] * (float)sample_rate;
             float diff = expected_delay_samples - measured_tdoa_samples;
@@ -142,18 +132,21 @@ void srp_phat_estimate(const gcc_phat_workspace_t *gcc_ws,
             power += weight * gcc_ws->peak_values[p];
         }
 
-        /* Store power for this angle */
-        if (num_angles < 361) {
+        if (num_angles < 361)
+        {
             result->power_spectrum[num_angles] = power;
         }
         num_angles++;
 
         /* Track the best and second-best peaks */
-        if (power > best_power) {
+        if (power > best_power)
+        {
             second_best_power = best_power;
             best_power = power;
             best_azimuth = theta;
-        } else if (power > second_best_power) {
+        }
+        else if (power > second_best_power)
+        {
             second_best_power = power;
         }
     }
@@ -173,16 +166,22 @@ void srp_phat_estimate(const gcc_phat_workspace_t *gcc_ws,
      * If the spectrum is flat, all directions are equally likely → low confidence.
      */
     float total_power = 0.0f;
-    for (int i = 0; i < num_angles; i++) {
+    for (int i = 0; i < num_angles; i++)
+    {
         total_power += result->power_spectrum[i];
     }
     float mean_power = total_power / (float)num_angles;
 
-    if (best_power > 1e-6f && mean_power > 0.0f) {
+    if (best_power > 1e-6f && mean_power > 0.0f)
+    {
         result->confidence = 1.0f - (mean_power / best_power);
-    } else if (best_power > 1e-6f) {
+    }
+    else if (best_power > 1e-6f)
+    {
         result->confidence = 1.0f;
-    } else {
+    }
+    else
+    {
         result->confidence = 0.0f;
     }
 

@@ -21,15 +21,15 @@
 #include "ddl/servo/servo_config.h"
 
 /* Orin detection -> lock-on pipeline */
-#include "orin/pose_ring.h"
-#include "orin/detection_msg.h"
-#include "orin/aiming.h"
-#include "orin/orin_receiver.h"
-#include "orin/tracker.h"
+#include "pose_ring.h"
+#include "detection_msg.h"
+#include "aiming.h"
+#include "orin_receiver.h"
+#include "tracker.h"
 
-/* PULL-bind endpoint for detections returning from the Orin. The Orin
- * PUSH-connects to this over the direct GigE link. Compile-time for now;
- * promote to streaming_config.json if it needs to vary per deployment. */
+/* PULL-bind endpoint for detections returning from the Orin, which
+ * PUSH-connects to it over the direct GigE link. Compile-time: that link is
+ * fixed, so this does not vary per deployment. */
 #define ORIN_DETECTION_ZMQ_ENDPOINT "tcp://0.0.0.0:5556"
 
 /* Depth of the detection->app forward queue (receiver thread -> main loop). */
@@ -44,6 +44,9 @@
  * per-detection corrections stay under the threshold and are not gated. */
 #define POSE_SETTLE_JUMP_DEG 3.0f
 #define POSE_SETTLE_MS       300u
+
+/* Where the optional per-detection log goes (SNIPEIT_LOG_DETECTIONS=1). */
+#define DET_LOG_PATH "/tmp/detections.log"
 
 /* Period of the periodic pipeline stats line (0 disables). */
 #define BRIDGE_STATS_PERIOD_MS 5000u
@@ -93,6 +96,13 @@ struct DdlBridge
     bool             det_up;
     int              det_head, det_tail, det_count;
     char             det_queue[DET_FWD_QUEUE][WS_MAX_MSG_SIZE];
+
+    /* Optional detection log, enabled per run with SNIPEIT_LOG_DETECTIONS=1.
+     * Its own file rather than stdout so the operational log stays readable and
+     * the detection stream can be grepped or diffed across runs. Opened in
+     * ddl_bridge_start, written only by the main loop in
+     * ddl_bridge_pump_detections, closed in ddl_bridge_stop. */
+    FILE*            det_log;
 };
 
 static unsigned long long now_ms_mono64(void)
@@ -139,7 +149,8 @@ static int select_detection_index(const OrinDetectionMsg* msg,
 
 /* Serialise a parsed Orin detection message into the EXACT "target_detection"
  * schema the app already consumes (compact, bbox in 1920x1080) — the same wire
- * shape the retired Python detector produced, so the app contract is unchanged.
+ * shape the retired Python detector produced. The base schema is unchanged;
+ * one OPTIONAL field is added (see below).
  *
  * When @ids is non-NULL the "id" field carries the STABLE track id ids[i]
  * (instead of the Orin's per-frame index), and an OPTIONAL non-breaking
@@ -531,6 +542,21 @@ DdlBridge* ddl_bridge_start(WebSocketServer* ws, unsigned int period_ms)
     {
         b->det_up = true;   /* detection->app forward queue ready */
     }
+
+    if (getenv("SNIPEIT_LOG_DETECTIONS") != NULL)
+    {
+        b->det_log = fopen(DET_LOG_PATH, "w");
+        if (b->det_log == NULL)
+        {
+            fprintf(stderr, "[BRIDGE] WARNING: could not open %s: detection "
+                            "logging disabled\n", DET_LOG_PATH);
+        }
+        else
+        {
+            setvbuf(b->det_log, NULL, _IOLBF, 0);   /* line-buffered: tail -f works */
+            printf("[BRIDGE] Detection logging enabled -> %s\n", DET_LOG_PATH);
+        }
+    }
     if (pthread_mutex_init(&b->lockon_mtx, NULL) == 0)
     {
         b->lockon_up  = true;
@@ -564,36 +590,6 @@ DdlBridge* ddl_bridge_start(WebSocketServer* ws, unsigned int period_ms)
 
 void ddl_bridge_tick(DdlBridge* b)
 {
-    /* ===== DIAG: tick-rate counters (remove once root cause is found) ===== */
-    static unsigned long diag_total_calls          = 0UL;
-    static unsigned long diag_skipped_no_client    = 0UL;
-    static unsigned long diag_skipped_gate_not_met = 0UL;
-    static unsigned long diag_emitted              = 0UL;
-    // static unsigned long diag_last_report_ms       = 0UL;
-
-    diag_total_calls++;
-
-    /* Report once per wall-second, regardless of which return path runs. */
-    // unsigned long diag_now_ms = now_ms_mono();
-    // if(diag_now_ms - diag_last_report_ms >= 1000UL)
-    // {
-    //     fprintf(stderr,
-    //         "[BRIDGE-DIAG] t_mono=%lums calls=%lu no_client=%lu "
-    //         "gated=%lu emitted=%lu\n",
-    //         diag_now_ms,
-    //         diag_total_calls,
-    //         diag_skipped_no_client,
-    //         diag_skipped_gate_not_met,
-    //         diag_emitted);
-
-    //     diag_total_calls          = 0UL;
-    //     diag_skipped_no_client    = 0UL;
-    //     diag_skipped_gate_not_met = 0UL;
-    //     diag_emitted              = 0UL;
-    //     diag_last_report_ms       = diag_now_ms;
-    // }
-    /* ===== END DIAG ===== */
-
     if(b == NULL || !b->scheduler_started)
     {
         return;
@@ -601,14 +597,12 @@ void ddl_bridge_tick(DdlBridge* b)
 
     if(!ws_is_client_connected(b->ws))
     {
-        diag_skipped_no_client++;   /* DIAG */
         return;
     }
 
     unsigned long t = now_ms_mono();
     if(b->last_emit_ms != 0 && (t - b->last_emit_ms) < b->period_ms)
     {
-        diag_skipped_gate_not_met++;   /* DIAG */
         return;
     }
     b->last_emit_ms = t;
@@ -633,8 +627,6 @@ void ddl_bridge_tick(DdlBridge* b)
     {
         fprintf(stderr, "[BRIDGE] ws_send_json failed (queue full?)\n");
     }
-
-    diag_emitted++;   /* DIAG */
 }
 
 void ddl_bridge_stop(DdlBridge* b)
@@ -667,6 +659,12 @@ void ddl_bridge_stop(DdlBridge* b)
         pthread_mutex_destroy(&b->lockon_mtx);
         b->lockon_up = false;
     }
+    if(b->det_log != NULL)
+    {
+        fclose(b->det_log);
+        b->det_log = NULL;
+    }
+
     if(b->det_up)
     {
         pthread_mutex_destroy(&b->det_mtx);
@@ -739,8 +737,8 @@ void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
             return;
 
         /* Clamp to the servo's mechanical pan/tilt range so set_target
-         * isn't rejected at the extremes (the app already clamps, but
-         * defense in depth costs nothing). */
+         * isn't rejected at the extremes (the app clamps too; this is the
+         * backstop). */
         if (h < SERVO_HORIZONTAL_MIN_ANGLE_DEG) h = SERVO_HORIZONTAL_MIN_ANGLE_DEG;
         if (h > SERVO_HORIZONTAL_MAX_ANGLE_DEG) h = SERVO_HORIZONTAL_MAX_ANGLE_DEG;
         if (v < SERVO_VERTICAL_MIN_ANGLE_DEG)   v = SERVO_VERTICAL_MIN_ANGLE_DEG;
@@ -804,12 +802,17 @@ void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
 }
 
 /* Periodic one-line pipeline health report (rates over the last period).
- * cap = frames pose-stamped/s (== capture+encode fps), orin = detection
+ * cap = frames reaching the Orin encoder per second (post-drop, so below raw
+ * capture fps when the encoder is behind), orin = detection
  * msgs/s back from the Orin, miss = pose-join misses, slew_skip = msgs
  * gated by the settling window, aim = servo follow updates pushed. */
 static void bridge_stats_tick(DdlBridge* b)
 {
+    /* Reached only from ddl_bridge_pump_detections, which runs on the main
+     * loop (main.c), so these statics need no synchronisation. */
+    /* cppcheck-suppress threadsafety-threadsafety */
     static uint64_t      last_ms;
+    /* cppcheck-suppress threadsafety-threadsafety */
     static unsigned long last_frames, last_msgs, last_miss, last_skip, last_aim;
 
     uint64_t now = now_ms_mono64();
@@ -871,8 +874,14 @@ void ddl_bridge_pump_detections(DdlBridge* b)
         pthread_mutex_unlock(&b->det_mtx);
 
         (void)ws_send_json(b->ws, line, len);
-        // Show the detection JSON on the console for debugging, but don't spam it.
-        printf("[BRIDGE] Forwarded detection JSON: %s\n\n", line);
+
+        /* Off unless SNIPEIT_LOG_DETECTIONS was set for this run. The JSON
+         * already carries the stable track id and the confirmed flag, so the
+         * line is the full record of what the app was told. */
+        if (b->det_log != NULL)
+        {
+            fprintf(b->det_log, "%llu %s\n", now_ms_mono64(), line);
+        }
     }
 }
 
@@ -883,10 +892,10 @@ void ddl_bridge_record_capture_pose(DdlBridge* b, uint32_t frame_id)
         return;
     }
 
-    /* Live commanded angles, NOT the broadcaster snapshot: the snapshot is
-     * refreshed once per 2 s scheduler cycle, so after a scan step it kept
-     * stamping frames with the pre-step pose -> ~10-deg bearing errors ->
-     * full track churn on every step. */
+    /* Live commanded angles, NOT the broadcaster snapshot. The snapshot only
+     * refreshes once per 2 s scheduler cycle, so it stamps frames with the
+     * pre-step pose after a scan step — ~10-deg bearing error, full track
+     * churn. The snapshot is the fallback only. */
     float pan, tilt;
     if (ddl_servo_get_pose(&pan, &tilt) != eSTATUS_SUCCESSFUL)
     {

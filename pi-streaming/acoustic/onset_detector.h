@@ -23,18 +23,21 @@
 #include "acoustic_config.h"
 
 /**
- * High-pass filter state for a 2nd-order IIR (biquad) filter.
- * Two past input samples and two past output samples.
+ * @brief High-pass filter state for a 2nd-order IIR (biquad) filter.
+ *
+ * @details Two past input samples and two past output samples.
  */
-typedef struct {
+typedef struct
+{
     float x1, x2;      /* Previous input samples */
     float y1, y2;      /* Previous output samples */
 } biquad_state_t;
 
 /**
- * Main onset detector state.
+ * @brief Main onset detector state.
  */
-typedef struct {
+typedef struct
+{
     /* High-pass filter */
     biquad_state_t  hp_filter;
     float           hp_b0, hp_b1, hp_b2;    /* Numerator coefficients */
@@ -49,57 +52,84 @@ typedef struct {
     /* Trigger state */
     float           threshold;              /* Ratio threshold for triggering */
     int             refractory_samples;     /* Minimum samples between triggers */
-    int             samples_since_trigger;  /* Counter since last trigger */
-    int             triggered;              /* Flag: 1 if currently in triggered state */
+    int64_t         samples_since_trigger;  /* Counter since last trigger */
+    int             triggered;              /* Latches to 1 on the first trigger and
+                                               stays set until reset(). Not a live
+                                               state flag -- refractory status is
+                                               samples_since_trigger vs
+                                               refractory_samples. */
     int             warmup_samples;         /* Samples needed before allowing triggers */
-    int             total_samples;          /* Total samples processed since reset */
+    int64_t         total_samples;          /* Total samples processed since reset */
     float           min_energy_floor;       /* Minimum long-term energy to allow trigger */
+
+    /* samples_since_trigger and total_samples must stay 64-bit. Both advance once
+     * per sample and are only reset by a trigger (samples_since_trigger) or by
+     * reset() (total_samples), so 32-bit versions wrap after ~12.4 h at 48 kHz.
+     * Once negative, the refractory and warmup tests never pass again and the
+     * detector stops firing without any error. */
 
     /* Configuration */
     int             sample_rate;
 } onset_detector_t;
 
 /**
- * onset_detector_create - Allocate and initialize an onset detector.
+ * @brief Allocate and initialize an onset detector.
  *
- * @sample_rate:    Audio sample rate (e.g., 48000).
- * @cutoff_hz:      High-pass filter cutoff frequency (e.g., 300.0).
- * @threshold:      Short/long energy ratio to trigger (e.g., 10.0).
- * @refractory_ms:  Minimum milliseconds between triggers (e.g., 500).
+ * @param sample_rate   Audio sample rate (e.g., 48000).
+ * @param cutoff_hz     High-pass filter cutoff frequency (e.g., 300.0).
+ * @param threshold     Short/long energy ratio to trigger (e.g., 10.0).
+ * @param refractory_ms Minimum milliseconds between triggers (e.g., 500).
  *
- * Returns a pointer to the new detector, or NULL on failure.
+ * @details The two energy window lengths are NOT arguments: they come from
+ *          SHORT_WINDOW_MS / LONG_WINDOW_MS at compile time. The detector also
+ *          refuses to fire for the first 1.5 long-windows (0.75 s at the
+ *          default 500 ms) while the long-term EMA settles, which looks like a
+ *          broken detector if you test with a short recording.
+ *
+ * @returns A pointer to the new detector, or NULL on failure.
  */
 onset_detector_t *onset_detector_create(int sample_rate, float cutoff_hz,
                                          float threshold, int refractory_ms);
 
 /**
- * onset_detector_destroy - Free all memory.
+ * @brief Free all memory.
+ *
+ * @param det The detector to destroy. May be NULL (no-op).
  */
 void onset_detector_destroy(onset_detector_t *det);
 
 /**
- * onset_detector_process - Feed a chunk of mono audio and check for trigger.
+ * @brief Feed a chunk of mono audio and check for a trigger.
  *
- * @det:        The onset detector.
- * @samples:    Array of mono float samples (already downmixed from
- *              multichannel if needed). Values should be normalized
- *              to approximately [-1.0, 1.0].
- * @num_samples: Number of samples in the chunk.
+ * @param det         The onset detector.
+ * @param samples     Array of mono float samples (already downmixed from
+ *                    multichannel if needed). Values should be normalized to
+ *                    approximately [-1.0, 1.0].
+ * @param num_samples Number of samples in the chunk.
  *
- * Returns 1 if a trigger was fired during this chunk, 0 otherwise.
- * If triggered, the detector enters the refractory period automatically.
+ * @details If triggered, the detector enters the refractory period
+ *          automatically.
+ *
+ * @returns 1 if a trigger fired during this chunk, 0 otherwise.
  */
 int onset_detector_process(onset_detector_t *det, const float *samples, int num_samples);
 
 /**
- * onset_detector_reset - Reset the detector state (filter, energy, trigger).
- * Useful when changing environments or after reconfiguration.
+ * @brief Reset the detector state (filter, energy, trigger).
+ *
+ * @param det The onset detector.
+ *
+ * @details Useful when changing environments or after reconfiguration.
  */
 void onset_detector_reset(onset_detector_t *det);
 
 /**
- * onset_detector_get_energy_ratio - Return the current short/long energy
- * ratio. Useful for debugging and visualization.
+ * @brief Return the current short/long energy ratio.
+ *
+ * @param det The onset detector.
+ *
+ * @returns The short/long energy ratio, or 0.0 when the long-term energy is
+ *          below 1e-12 -- indistinguishable from a genuine ratio of zero.
  */
 float onset_detector_get_energy_ratio(const onset_detector_t *det);
 

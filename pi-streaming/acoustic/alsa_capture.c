@@ -42,7 +42,8 @@ static void convert_s32_to_float(const int32_t *input, float *output,
     int total_samples = num_frames * num_channels;
     float scale = 1.0f / 2147483648.0f;  /* 1 / 2^31 */
 
-    for (int i = 0; i < total_samples; i++) {
+    for (int i = 0; i < total_samples; i++)
+    {
         output[i] = (float)input[i] * scale;
     }
 }
@@ -55,9 +56,11 @@ static void downmix_to_mono(const float *multichannel, float *mono,
                              int num_frames, int num_channels)
 {
     float scale = 1.0f / (float)num_channels;
-    for (int f = 0; f < num_frames; f++) {
+    for (int f = 0; f < num_frames; f++)
+    {
         float sum = 0.0f;
-        for (int ch = 0; ch < num_channels; ch++) {
+        for (int ch = 0; ch < num_channels; ch++)
+        {
             sum += multichannel[f * num_channels + ch];
         }
         mono[f] = sum * scale;
@@ -67,27 +70,34 @@ static void downmix_to_mono(const float *multichannel, float *mono,
 /* ---------------------------------------------------------------------------
  * Internal: ALSA xrun recovery.
  *
- * An xrun occurs when the capture buffer overflows because the
- * application did not read data fast enough. We recover by calling
- * snd_pcm_prepare() to reset the stream.
+ * An xrun occurs when the capture buffer overflows because the application did
+ * not read data fast enough. We recover by calling snd_pcm_prepare() to reset
+ * the stream. Only -EPIPE and -ESTRPIPE are handled; any other error is
+ * returned to the caller unchanged.
  * ------------------------------------------------------------------------ */
 static int xrun_recovery(snd_pcm_t *handle, int err)
 {
-    if (err == -EPIPE) {
+    if (err == -EPIPE)
+    {
         /* Buffer overrun */
         fprintf(stderr, "[alsa_capture] XRUN (buffer overrun), recovering...\n");
         err = snd_pcm_prepare(handle);
-        if (err < 0) {
+        if (err < 0)
+        {
             fprintf(stderr, "[alsa_capture] Cannot recover from XRUN: %s\n",
                     snd_strerror(err));
         }
-    } else if (err == -ESTRPIPE) {
+    }
+    else if (err == -ESTRPIPE)
+    {
         /* Suspended (e.g., by power management) */
         fprintf(stderr, "[alsa_capture] Stream suspended, recovering...\n");
-        while ((err = snd_pcm_resume(handle)) == -EAGAIN) {
+        while ((err = snd_pcm_resume(handle)) == -EAGAIN)
+        {
             usleep(100000);  /* Wait for resume to complete */
         }
-        if (err < 0) {
+        if (err < 0)
+        {
             err = snd_pcm_prepare(handle);
         }
     }
@@ -105,12 +115,12 @@ static void *capture_thread_func(void *arg)
     int chunk = cap->chunk_frames;
     int ch    = cap->num_channels;
 
-    /* Allocate buffers for one chunk */
     int32_t *raw_buf   = (int32_t *)malloc(sizeof(int32_t) * chunk * ch);
     float   *float_buf = (float *)malloc(sizeof(float) * chunk * ch);
     float   *mono_buf  = (float *)malloc(sizeof(float) * chunk);
 
-    if (!raw_buf || !float_buf || !mono_buf) {
+    if (!raw_buf || !float_buf || !mono_buf)
+    {
         fprintf(stderr, "[alsa_capture] Failed to allocate capture buffers\n");
         free(raw_buf);
         free(float_buf);
@@ -122,14 +132,19 @@ static void *capture_thread_func(void *arg)
     fprintf(stdout, "[alsa_capture] Capture thread started (%d Hz, %d ch, %d frames/chunk)\n",
             cap->sample_rate, ch, chunk);
 
-    while (cap->running) {
+    while (cap->running)
+    {
         /* Read one chunk of interleaved audio */
         int frames_read = snd_pcm_readi(handle, raw_buf, chunk);
 
-        if (frames_read < 0) {
-            /* Handle xrun or other error */
+        if (frames_read < 0)
+        {
+            /* frames_read is reused to carry the recovery status: 0 if the
+             * stream was reprepared, still negative if the error was not one
+             * xrun_recovery() handles. */
             frames_read = xrun_recovery(handle, frames_read);
-            if (frames_read < 0) {
+            if (frames_read < 0)
+            {
                 fprintf(stderr, "[alsa_capture] Read error: %s\n",
                         snd_strerror(frames_read));
                 cap->xrun_count++;
@@ -144,21 +159,24 @@ static void *capture_thread_func(void *arg)
         /* Convert int32 -> float */
         convert_s32_to_float(raw_buf, float_buf, frames_read, ch);
 
-        /* Write to ring buffer */
-        if (cap->ring_buffer) {
+        if (cap->ring_buffer)
+        {
             ring_buffer_write(cap->ring_buffer, float_buf, frames_read);
         }
 
         /* Run onset detector on mono downmix */
-        if (cap->onset_detector) {
+        if (cap->onset_detector)
+        {
             downmix_to_mono(float_buf, mono_buf, frames_read, ch);
 
-            if (onset_detector_process(cap->onset_detector, mono_buf, frames_read)) {
+            if (onset_detector_process(cap->onset_detector, mono_buf, frames_read))
+            {
                 uint64_t ts = get_timestamp_us();
                 fprintf(stdout, "[alsa_capture] Onset detected at %llu us\n",
                         (unsigned long long)ts);
 
-                if (cap->onset_cb) {
+                if (cap->onset_cb)
+                {
                     cap->onset_cb(ts, cap->onset_cb_data);
                 }
             }
@@ -187,7 +205,8 @@ alsa_capture_t *alsa_capture_create(const char *device_name,
                                      int chunk_frames)
 {
     alsa_capture_t *cap = (alsa_capture_t *)calloc(1, sizeof(alsa_capture_t));
-    if (!cap) {
+    if (!cap)
+    {
         fprintf(stderr, "[alsa_capture] Failed to allocate capture instance\n");
         return NULL;
     }
@@ -206,7 +225,8 @@ void alsa_capture_destroy(alsa_capture_t *cap)
 {
     if (!cap) return;
 
-    if (cap->running) {
+    if (cap->running)
+    {
         alsa_capture_stop(cap);
     }
 
@@ -235,7 +255,8 @@ void alsa_capture_set_onset_callback(alsa_capture_t *cap,
 int alsa_capture_start(alsa_capture_t *cap)
 {
     if (!cap) return -1;
-    if (cap->running) {
+    if (cap->running)
+    {
         fprintf(stderr, "[alsa_capture] Already running\n");
         return -1;
     }
@@ -243,7 +264,8 @@ int alsa_capture_start(alsa_capture_t *cap)
     /* Open the ALSA capture device */
     snd_pcm_t *handle;
     int err = snd_pcm_open(&handle, cap->device_name, SND_PCM_STREAM_CAPTURE, 0);
-    if (err < 0) {
+    if (err < 0)
+    {
         fprintf(stderr, "[alsa_capture] Cannot open device '%s': %s\n",
                 cap->device_name, snd_strerror(err));
         fprintf(stderr, "[alsa_capture] Hint: Run 'arecord -l' to list available devices.\n");
@@ -256,10 +278,10 @@ int alsa_capture_start(alsa_capture_t *cap)
     snd_pcm_hw_params_alloca(&hw_params);
     snd_pcm_hw_params_any(handle, hw_params);
 
-    /* Set interleaved access mode */
     err = snd_pcm_hw_params_set_access(handle, hw_params,
                                         SND_PCM_ACCESS_RW_INTERLEAVED);
-    if (err < 0) {
+    if (err < 0)
+    {
         fprintf(stderr, "[alsa_capture] Cannot set access mode: %s\n", snd_strerror(err));
         snd_pcm_close(handle);
         cap->pcm_handle = NULL;
@@ -268,11 +290,13 @@ int alsa_capture_start(alsa_capture_t *cap)
 
     /* Set sample format: 32-bit signed (INMP441 outputs 24-bit in 32-bit frame) */
     err = snd_pcm_hw_params_set_format(handle, hw_params, SND_PCM_FORMAT_S32_LE);
-    if (err < 0) {
+    if (err < 0)
+    {
         fprintf(stderr, "[alsa_capture] Cannot set format S32_LE: %s\n", snd_strerror(err));
         fprintf(stderr, "[alsa_capture] Trying S24_LE...\n");
         err = snd_pcm_hw_params_set_format(handle, hw_params, SND_PCM_FORMAT_S24_LE);
-        if (err < 0) {
+        if (err < 0)
+        {
             fprintf(stderr, "[alsa_capture] Cannot set format S24_LE: %s\n", snd_strerror(err));
             snd_pcm_close(handle);
             cap->pcm_handle = NULL;
@@ -280,9 +304,9 @@ int alsa_capture_start(alsa_capture_t *cap)
         }
     }
 
-    /* Set number of channels */
     err = snd_pcm_hw_params_set_channels(handle, hw_params, (unsigned int)cap->num_channels);
-    if (err < 0) {
+    if (err < 0)
+    {
         fprintf(stderr, "[alsa_capture] Cannot set %d channels: %s\n",
                 cap->num_channels, snd_strerror(err));
         snd_pcm_close(handle);
@@ -290,17 +314,18 @@ int alsa_capture_start(alsa_capture_t *cap)
         return -1;
     }
 
-    /* Set sample rate */
     unsigned int rate = (unsigned int)cap->sample_rate;
     err = snd_pcm_hw_params_set_rate_near(handle, hw_params, &rate, 0);
-    if (err < 0) {
+    if (err < 0)
+    {
         fprintf(stderr, "[alsa_capture] Cannot set rate %d: %s\n",
                 cap->sample_rate, snd_strerror(err));
         snd_pcm_close(handle);
         cap->pcm_handle = NULL;
         return -1;
     }
-    if ((int)rate != cap->sample_rate) {
+    if ((int)rate != cap->sample_rate)
+    {
         fprintf(stderr, "[alsa_capture] Rate adjusted from %d to %u\n",
                 cap->sample_rate, rate);
         cap->sample_rate = (int)rate;
@@ -309,20 +334,23 @@ int alsa_capture_start(alsa_capture_t *cap)
     /* Set buffer size (larger = more latency but fewer xruns) */
     snd_pcm_uframes_t buffer_size = (snd_pcm_uframes_t)(cap->sample_rate / 4);  /* 250 ms */
     err = snd_pcm_hw_params_set_buffer_size_near(handle, hw_params, &buffer_size);
-    if (err < 0) {
+    if (err < 0)
+    {
         fprintf(stderr, "[alsa_capture] Cannot set buffer size: %s\n", snd_strerror(err));
     }
 
     /* Set period size (frames per hardware interrupt) */
     snd_pcm_uframes_t period_size = (snd_pcm_uframes_t)cap->chunk_frames;
     err = snd_pcm_hw_params_set_period_size_near(handle, hw_params, &period_size, 0);
-    if (err < 0) {
+    if (err < 0)
+    {
         fprintf(stderr, "[alsa_capture] Cannot set period size: %s\n", snd_strerror(err));
     }
 
     /* Apply hardware parameters */
     err = snd_pcm_hw_params(handle, hw_params);
-    if (err < 0) {
+    if (err < 0)
+    {
         fprintf(stderr, "[alsa_capture] Cannot apply hw params: %s\n", snd_strerror(err));
         snd_pcm_close(handle);
         cap->pcm_handle = NULL;
@@ -338,7 +366,8 @@ int alsa_capture_start(alsa_capture_t *cap)
 
     /* Prepare the device */
     err = snd_pcm_prepare(handle);
-    if (err < 0) {
+    if (err < 0)
+    {
         fprintf(stderr, "[alsa_capture] Cannot prepare device: %s\n", snd_strerror(err));
         snd_pcm_close(handle);
         cap->pcm_handle = NULL;
@@ -348,7 +377,8 @@ int alsa_capture_start(alsa_capture_t *cap)
     /* Start capture thread */
     cap->running = 1;
     err = pthread_create(&cap->thread, NULL, capture_thread_func, cap);
-    if (err != 0) {
+    if (err != 0)
+    {
         fprintf(stderr, "[alsa_capture] Cannot create capture thread: %s\n", strerror(err));
         cap->running = 0;
         snd_pcm_close(handle);
@@ -363,7 +393,8 @@ int alsa_capture_start(alsa_capture_t *cap)
      */
     struct sched_param sched;
     sched.sched_priority = 80;
-    if (pthread_setschedparam(cap->thread, SCHED_FIFO, &sched) != 0) {
+    if (pthread_setschedparam(cap->thread, SCHED_FIFO, &sched) != 0)
+    {
         fprintf(stderr, "[alsa_capture] Note: Could not set RT priority "
                 "(run as root or set CAP_SYS_NICE for lower latency)\n");
     }
@@ -378,7 +409,8 @@ void alsa_capture_stop(alsa_capture_t *cap)
     cap->running = 0;
     pthread_join(cap->thread, NULL);
 
-    if (cap->pcm_handle) {
+    if (cap->pcm_handle)
+    {
         snd_pcm_drop((snd_pcm_t *)cap->pcm_handle);
         snd_pcm_close((snd_pcm_t *)cap->pcm_handle);
         cap->pcm_handle = NULL;
@@ -395,7 +427,8 @@ void alsa_capture_list_devices(void)
     int card = -1;
     fprintf(stdout, "\n[alsa_capture] Available capture devices:\n");
 
-    while (snd_card_next(&card) >= 0 && card >= 0) {
+    while (snd_card_next(&card) >= 0 && card >= 0)
+    {
         char *name = NULL;
         snd_card_get_name(card, &name);
         fprintf(stdout, "  Card %d: %s\n", card, name ? name : "unknown");
@@ -406,9 +439,11 @@ void alsa_capture_list_devices(void)
         char card_id[32];
         snprintf(card_id, sizeof(card_id), "hw:%d", card);
 
-        if (snd_ctl_open(&ctl, card_id, 0) >= 0) {
+        if (snd_ctl_open(&ctl, card_id, 0) >= 0)
+        {
             int dev = -1;
-            while (snd_ctl_pcm_next_device(ctl, &dev) >= 0 && dev >= 0) {
+            while (snd_ctl_pcm_next_device(ctl, &dev) >= 0 && dev >= 0)
+            {
                 fprintf(stdout, "    Device hw:%d,%d\n", card, dev);
             }
             snd_ctl_close(ctl);

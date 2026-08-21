@@ -7,6 +7,14 @@ moved to the Orin. Kept as a fallback.
   wrote H.264 to the FIFO for the app video and detections to the C server over
   the Unix socket (`ipc_client.py`).
 - `ipc_client.py` — Unix-socket IPC client (detection JSON to streaming_server).
+- `unix_socket.c` / `unix_socket.h` — the C server side of that same Unix socket
+  (`/tmp/detection.sock`): accepted the Python client, sent START/STOP, read
+  detection JSON. Moved here 2026-08-16; it had been left in `pi-streaming/` and
+  was still compiled into `streaming_server` even though `main.c` stopped
+  calling it when detection moved to the Orin.
+- `test_ipc.c` — C harness that drove `unix_socket.c` against `test_ipc.py`.
+- `probe_camera_fov.py` — measured the capture FOV through picamera2, by
+  replicating `person_streamer.py`'s camera configuration.
 - `models/` — the EdgeTPU / tflite detection models + labels.
 - `check.py`, `diag_tpu.py`, `probe_uint8.py`, `test_on_video.py`, `test_ipc.py`
   — EdgeTPU diagnostics / dev tools.

@@ -14,13 +14,16 @@
  * geometry clamps to the same range the servo FSM accepts. */
 #include "ddl/servo/servo_config.h"
 
-/* MEASURED FOV for the 1080p capture path (probe_camera_fov.py, 2026-07-01,
- * IMX477 + 16mm on this rig). picamera2's config for main=1920x1080 selects the
- * 2028x1080 sensor mode and the ISP applies ScalerCrop (108, 440, 3840, 2160) —
- * i.e. a 3840x2160 sensor rectangle (1.55um pitch) mapped to the 1080p output:
+/* MEASURED FOV for the 1080p capture path (script/probe_camera_fov.py,
+ * IMX477 + 16mm on this rig). For a 1920x1080 output libcamera selects the
+ * 2028x1080 sensor mode and applies ScalerCrop (108, 440, 3840, 2160) — i.e. a
+ * 3840x2160 sensor rectangle (1.55um pitch) mapped to the 1080p output:
  *
  *   HFOV = 2*atan( 3840*1.55um / (2*16mm) )  = 21.07 deg
  *   VFOV = 2*atan( 2160*1.55um / (2*16mm) )  = 11.95 deg
+ *
+ * First measured 2026-07-01 through picamera2, back when person_streamer.py
+ * owned the camera.
  *
  * Re-run probe_camera_fov.py and update these if the lens, sensor mode, or the
  * main-stream size/aspect changes. */
@@ -54,9 +57,8 @@ void aim_config_default(AimConfig *cfg)
      * angle -> pan_sign=-1). Tilt RE-verified 2026-07-06 after the vertical
      * mount changed (range now 70..150, level ~110): increasing the tilt
      * angle now pitches the camera DOWN, so a bottom-of-image target must
-     * RAISE the tilt angle -> tilt_sign=+1. (The old -1 drove the tilt away
-     * from the target into the 70-deg clamp on lock.) Re-verify both signs
-     * with a manual jog whenever a servo axis is remounted. */
+     * RAISE the tilt angle -> tilt_sign=+1. Re-verify both signs with a
+     * manual jog whenever a servo axis is remounted. */
     cfg->pan_sign     = -1.0f;
     cfg->tilt_sign    = +1.0f;
     cfg->pan_min_deg  = SERVO_HORIZONTAL_MIN_ANGLE_DEG;
