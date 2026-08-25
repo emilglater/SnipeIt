@@ -236,6 +236,8 @@ static void build_sink_chain(const FrameSenderConfig *cfg, GString *p)
 void frame_sender_config_default(FrameSenderConfig *cfg)
 {
     if (cfg == NULL) return;
+    /* Zero first, then set the non-zero defaults. */
+    memset(cfg, 0, sizeof(*cfg));
     cfg->source        = FRAME_SENDER_SOURCE_LIBCAMERA;
     cfg->width         = 1920;
     cfg->height        = 1080;
@@ -251,6 +253,9 @@ void frame_sender_config_default(FrameSenderConfig *cfg)
     cfg->sink          = FRAME_SENDER_SINK_RTP_UDP;
     cfg->host          = NULL;
     cfg->port          = 5600;
+    cfg->app_preview       = false;
+    cfg->app_bitrate_kbps  = 8000;
+    cfg->app_speed_preset  = "ultrafast";
     cfg->on_frame_captured = NULL;
     cfg->on_frame_sent     = NULL;
     cfg->user          = NULL;
