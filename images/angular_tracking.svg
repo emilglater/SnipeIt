@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="576" viewBox="0 0 960 576" role="img" aria-labelledby="t d">
+  <title id="t">Angular-space tracking</title>
+  <desc id="d">A stationary target keeps the same world bearing while the camera pans, so its bounding box moves across the image from one frame to the next.</desc>
+
+  <rect x="0" y="0" width="960" height="576" fill="#ffffff"/>
+
+  <text x="480" y="34" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="19" font-weight="bold" fill="#1f2328">Angular-space tracking</text>
+  <text x="480" y="55" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" fill="#57606a">The camera pans, the box moves across the image, the world bearing does not.</text>
+
+  <!-- ================= left: top-down world view ================= -->
+  <rect x="24" y="70" width="476" height="472" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+  <text x="40" y="92" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#1f2328">World, seen from above</text>
+
+  <!-- field of view at t2 (pan +14) -->
+  <path d="M 262 484 L 213.01 135.43 A 352 352 0 0 1 468.90 199.23 Z" fill="#f0aa47" fill-opacity="0.35" stroke="#bf6a02" stroke-width="1.5"/>
+  <!-- field of view at t1 (pan -14) -->
+  <path d="M 262 484 L 55.10 199.23 A 352 352 0 0 1 310.99 135.43 Z" fill="#8fc2f0" fill-opacity="0.35" stroke="#0969da" stroke-width="1.5"/>
+
+  <!-- boresight at t1 and t2 -->
+  <line x1="262" y1="484" x2="179.75" y2="154.10" stroke="#0969da" stroke-width="1.4" stroke-dasharray="7 5"/>
+  <line x1="262" y1="484" x2="344.25" y2="154.10" stroke="#bf6a02" stroke-width="1.4" stroke-dasharray="7 5"/>
+  <text x="36" y="150" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#0969da">t1: pan -14 deg</text>
+  <text x="488" y="150" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#bf6a02">t2: pan +14 deg</text>
+
+  <!-- pan arc -->
+  <path d="M 216.03 299.64 A 190 190 0 0 1 307.97 299.64" fill="none" stroke="#57606a" stroke-width="1.6"/>
+  <path d="M 307.97 299.64 L 297.30 301.10 L 299.24 293.34 Z" fill="#57606a"/>
+  <rect x="128" y="264" width="102" height="26" rx="4" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+  <text x="179" y="281" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#57606a">the camera pans</text>
+
+  <!-- world bearing to the target -->
+  <line x1="262" y1="484" x2="262" y2="207" stroke="#cf222e" stroke-width="2" stroke-dasharray="6 4"/>
+  <circle cx="262" cy="196" r="9" fill="#cf222e"/>
+  <rect x="272" y="168" width="182" height="42" rx="4" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+  <text x="282" y="187" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#cf222e">stationary target</text>
+  <text x="282" y="203" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#cf222e">same bearing at t1 and t2</text>
+
+  <!-- camera -->
+  <rect x="240" y="472" width="44" height="26" rx="4" fill="#57606a"/>
+  <circle cx="262" cy="485" r="7" fill="#f6f8fa"/>
+  <text x="262" y="522" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#1f2328">camera on the servo arm</text>
+
+  <!-- ================= right: what the frames look like ================= -->
+  <text x="560" y="92" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#1f2328">The frames the detector sees</text>
+
+  <rect x="560" y="100" width="360" height="202" rx="4" fill="#eaeef2" stroke="#0969da" stroke-width="2"/>
+  <line x1="740" y1="100" x2="740" y2="302" stroke="#8c959f" stroke-width="1" stroke-dasharray="4 4"/>
+  <rect x="823" y="145" width="56" height="112" fill="none" stroke="#cf222e" stroke-width="2.5"/>
+  <text x="572" y="122" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#0969da">frame at t1</text>
+  <text x="851" y="275" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#cf222e">right of center</text>
+
+  <rect x="560" y="340" width="360" height="202" rx="4" fill="#eaeef2" stroke="#bf6a02" stroke-width="2"/>
+  <line x1="740" y1="340" x2="740" y2="542" stroke="#8c959f" stroke-width="1" stroke-dasharray="4 4"/>
+  <rect x="601" y="385" width="56" height="112" fill="none" stroke="#cf222e" stroke-width="2.5"/>
+  <text x="572" y="362" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#bf6a02">frame at t2</text>
+  <text x="629" y="515" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#cf222e">left of center</text>
+
+  <line x1="880" y1="308" x2="762" y2="334" stroke="#8c959f" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <path d="M 762 334 L 771.5 328.6 L 772.2 336.5 Z" fill="#8c959f"/>
+  <text x="570" y="325" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#8c959f">same target, one frame later</text>
+
+  <text x="480" y="564" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12.5" fill="#1f2328">Image position is not a stable identity. Capture pose plus box position gives one, and the tracker associates in that angular space.</text>
+</svg>
