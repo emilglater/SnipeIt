@@ -197,11 +197,10 @@ int config_probe_video(StreamingConfig *config)
         return -1;
     }
 
-    /* For a named pipe (FIFO), ffprobe would block waiting for data. Hardcode
-     * the capture parameters instead. These MUST match what the frame sender's
-     * app-preview branch actually writes: app_preview_width/height/fps default
-     * to 0 (= use the capture values, 1920x1080/30). Setting them in the config
-     * file would silently desync video_fps here from FFmpeg's -r flag. */
+    /* ffprobe blocks on a named pipe (FIFO), so use the known capture
+     * parameters instead. These match the frame sender's app-preview branch,
+     * whose app_preview_width/height/fps default to 0, meaning the capture
+     * values. */
     if (config_is_fifo(config->video_path))
     {
         config->video_duration_sec = 0.0;

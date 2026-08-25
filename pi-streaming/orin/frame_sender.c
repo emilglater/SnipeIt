@@ -284,25 +284,14 @@ FrameSender *frame_sender_start(const FrameSenderConfig *cfg)
         g_string_append_printf(opt, ":%s", cfg->x265_extra);
     }
 
-    /* Source head -> a normalised I420 WxH@fps stream feeding 'cappoint'.
-     *  - videotestsrc already produces video/x-raw, so a plain caps filter
-     *    negotiates (this is the 68/68-validated path).
-     *  - libcamerasrc advertises the IMX477 sensor modes (e.g. 2028x1080), not
-     *    our exact 1920x1080, so we must videoscale/videorate/videoconvert to
-     *    bridge to the requested size/rate/format; a direct caps filter on its
-     *    src pad fails to negotiate (not-negotiated -4).
-     *  - The framerate cap must reach libcamerasrc itself (videoconvert/
-     *    videoscale forward it upstream): it becomes a FrameDurationLimits
-     *    control that caps the auto-exposure shutter time. Without it, a dark
-     *    scene lets AE stretch exposures to seconds (~0.1 fps) and starves
-     *    every branch — black app stream, no RTP to the Orin.
-     *  - NO videorate anywhere near the source. The camera's first frame
-     *    arrives ~0.8 s into the segment (AGC warm-up); videorate gap-fills
-     *    from t=0 with dozens of duplicate refs of the first camera buffer,
-     *    parking libcamerasrc's tiny (~4) buffer pool behind the encoders and
-     *    stalling capture at <1 fps (measured). The caps filter alone is
-     *    enough to hold the source rate. */
-    /* 1. Source head -> a normalised I420 WxH@fps stream (no cappoint here). */
+    /* 1. Source head: a normalised I420 WxH@fps stream feeding 'cappoint'.
+     *  - libcamerasrc advertises the IMX477 sensor modes, not our exact
+     *    1920x1080, so videoconvert/videoscale bridge to the requested format.
+     *  - The framerate cap must reach libcamerasrc itself. It becomes a
+     *    FrameDurationLimits control that bounds the auto-exposure shutter
+     *    time, which is what keeps a dark scene from stretching exposures.
+     *  - No videorate near the source. Its gap-filling duplicates references
+     *    to the camera's small buffer pool and stalls capture. */
     GString *p = g_string_new(NULL);
     if (cfg->source == FRAME_SENDER_SOURCE_VIDEOTEST)
     {
@@ -321,17 +310,13 @@ FrameSender *frame_sender_start(const FrameSenderConfig *cfg)
             cfg->width, cfg->height, cfg->fps);
     }
 
-    /* 2. Optional tee: when the app-preview H.264 branch is on, split the
-     *    capture. Both branches use a leaky queue so a slow software encoder
-     *    drops its own frames instead of back-pressuring the source (and thus
-     *    the other branch). max-size-buffers=1 is load-bearing: the branches
-     *    hold refs to libcamerasrc's OWN capture buffers (head is passthrough)
-     *    and its pool only has ~4 — queues of 4 park the whole pool behind the
-     *    slow x265 branch and stall capture at <1 fps (measured); queues of 1
-     *    park at most one per branch. 'cappoint' — where the frame_id is
-     *    assigned and the pose recorded — sits in the H.265/Orin branch AFTER
-     *    its leaky queue, so dropped frames never desync the frame_id<->AU
-     *    mapping. */
+    /* 2. Optional tee: split the capture when the app-preview branch is on.
+     *    Both branches use a leaky queue so a slow software encoder drops its
+     *    own frames instead of back-pressuring the source. max-size-buffers=1
+     *    is load-bearing: the branches hold references to libcamerasrc's own
+     *    capture buffers and its pool holds about four. cappoint sits after
+     *    the leaky queue, so a dropped frame cannot desync frame_id from its
+     *    access unit. */
     bool app_on = cfg->app_preview && cfg->app_fifo_path && cfg->app_fifo_path[0];
     if (!cfg->orin_branch && !app_on)
     {
@@ -352,12 +337,9 @@ FrameSender *frame_sender_start(const FrameSenderConfig *cfg)
     }
     else
     {
-        /* Single-branch mode (either encoder alone): no tee. cappoint still
-         * assigns frame_ids and fires the pose callback. NOTE: here cappoint
-         * sits BEFORE the leaky queue, the reverse of the dual-branch case
-         * above, so frame_ids get assigned to frames the queue may later drop.
-         * Harmless only because this mode has no SEI consumer; do not add one
-         * without moving cappoint after the queue. */
+        /* Single-branch mode: no tee. cappoint assigns frame_ids and fires
+         * the pose callback inline. This mode has no SEI consumer, so
+         * cappoint sits ahead of the queue. */
         g_string_append(p, " ! identity name=cappoint silent=true");
     }
 
@@ -391,11 +373,10 @@ FrameSender *frame_sender_start(const FrameSenderConfig *cfg)
             /* No tee: continue inline after cappoint, same leaky decoupling. */
             g_string_append(p,
                 " ! queue max-size-buffers=1 leaky=downstream");
-        /* Scale/rate elements only when the preview actually differs from the
-         * capture — every extra transform in this branch handles refs of the
-         * camera's scarce pool buffers. videorate is drop-only + skip-to-first:
-         * it must never DUPLICATE (gap-filling floods the branch with refs of
-         * one camera buffer — the <1 fps stall) and must not fill from t=0. */
+        /* Scale and rate elements only when the preview differs from the
+         * capture: every extra transform holds references to the camera's
+         * small buffer pool. videorate is drop-only and skip-to-first, so it
+         * never duplicates a frame. */
         if (aw != cfg->width || ah != cfg->height)
             g_string_append_printf(p,
                 " ! videoscale ! video/x-raw,width=%d,height=%d", aw, ah);
@@ -440,11 +421,9 @@ FrameSender *frame_sender_start(const FrameSenderConfig *cfg)
     }
 
     GstPad *cap_pad = gst_element_get_static_pad(s->capture_point, "src");
-    /* INVARIANT: splice the SEI on h265parse's SINK pad (x265enc output,
-     * byte-stream/au), never its src pad. Post-parse insertion is not
-     * re-validated, and rtph265pay then mis-frames the AU boundaries so no
-     * depayloader can reassemble the stream - even though the same bytes decode
-     * fine as an elementary stream. */
+    /* INVARIANT: splice the SEI on h265parse's SINK pad, never its src pad.
+     * h265parse does not re-validate a NAL inserted after it, and rtph265pay
+     * then mis-frames the access-unit boundaries. */
     s->cap_probe_id = gst_pad_add_probe(cap_pad, GST_PAD_PROBE_TYPE_BUFFER,
                                         cap_probe_cb, s, NULL);
     gst_object_unref(cap_pad);

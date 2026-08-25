@@ -10,12 +10,11 @@
  *        \--handler: pose_ring_lookup(frame_id) -> aim_compute -> print
  *
  * Why one process: the pose ring is shared in-memory between the sender (writer,
- * at capture) and the receiver (reader, on detection). The full service wires
- * this into ddl_bridge with REAL servo poses; here, with no DDL/servo stack
- * running (the camera can only be held once), we record a PLACEHOLDER capture
- * pose (--pan/--tilt, default 0,0). That still proves the whole loop: transport,
- * SEI frame_id echo, frame_id->pose join, and the aiming geometry. The pose
- * VALUES become real once this is wired into streaming_server.
+ * at capture) and the receiver (reader, on detection). The full service records
+ * real servo poses through ddl_bridge. This harness runs the same loop without
+ * the device layer, so it records a fixed pose (--pan/--tilt, default 0,0) and
+ * still exercises the transport, the SEI frame_id echo, the frame_id to pose
+ * join and the aiming geometry.
  *
  * Build/run:
  *   make orin_live_loop
@@ -155,7 +154,7 @@ int main(int argc, char **argv)
     g_mutex_init(&c.mtx);
     c.pan = 90.0f;   /* placeholder home pose (mid servo travel) — no DDL stack */
     c.tilt = 90.0f;
-    aim_config_default(&c.aim);      /* PROVISIONAL FOV until probe_camera_fov */
+    aim_config_default(&c.aim);      /* FOV measured by script/probe_camera_fov.py */
 
     c.ring = pose_ring_create(POSE_RING_DEFAULT_CAPACITY);
     if (c.ring == NULL)
@@ -172,8 +171,8 @@ int main(int argc, char **argv)
         pose_ring_destroy(c.ring);
         return 1;
     }
-    g_print("[LOOP] PULL bound at %s ; aiming FOV=%.1f/%.1f deg @ %dx%d "
-            "(PROVISIONAL), capture pose=(%.1f,%.1f placeholder)\n",
+    g_print("[LOOP] PULL bound at %s ; aiming FOV=%.1f/%.1f deg @ %dx%d"
+            ", capture pose=(%.1f,%.1f placeholder)\n",
             zmqbind, c.aim.hfov_deg, c.aim.vfov_deg, c.aim.frame_w, c.aim.frame_h,
             c.pan, c.tilt);
 

@@ -22,8 +22,7 @@ Two stages, because libcamerasrc exposes neither the sensor mode nor ScalerCrop:
 Stage 2 only means anything because stage 1 confirms the size it replays; on a
 mismatch, rerun at the size stage 1 reports.
 
-Copy the printed HFOV/VFOV into AIM_DEFAULT_*_DEG in orin/aiming.c. The
-picamera2 version of this probe is retired to legacy/edgetpu/.
+Copy the printed HFOV/VFOV into AIM_DEFAULT_*_DEG in orin/aiming.c.
 """
 
 import argparse

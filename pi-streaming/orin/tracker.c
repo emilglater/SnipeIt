@@ -125,17 +125,14 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
     }
 
     /* Time base is the frame's CAPTURE timestamp, not wall clock, so coasting
-     * is measured in capture time. Messages are expected in capture order
-     * (ZeroMQ PUSH/PULL over TCP preserves it), but the coast check at the
-     * bottom guards the comparison anyway: unguarded, one out-of-order message
-     * would wrap the unsigned subtraction and delete every unmatched track. */
+     * is measured in capture time. ZeroMQ PUSH/PULL over TCP delivers in
+     * capture order; the coast check at the bottom does not rely on that. */
     const uint64_t now = pose->capture_ts_ms;
     const int      nd  = (msg->num_detections < ORIN_MAX_DETECTIONS)
                             ? msg->num_detections : ORIN_MAX_DETECTIONS;
 
-    /* Only [0, nd) is written or read; zeroed anyway so static analysis
-     * needn't prove it. */
-    float dp[ORIN_MAX_DETECTIONS] = {0};   /* detection bearings + width */
+    /* Per-detection bearing, elevation and angular width. Only [0, nd) is used. */
+    float dp[ORIN_MAX_DETECTIONS] = {0};
     float dt[ORIN_MAX_DETECTIONS] = {0};
     float dw[ORIN_MAX_DETECTIONS] = {0};
     bool  det_taken[ORIN_MAX_DETECTIONS];
@@ -178,7 +175,6 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
                 }
             }
         }
-        /* bi and bk are assigned together; testing both states that. */
         if (bi < 0 || bk < 0) break;
 
         Track *tr = &t->tracks[bk];

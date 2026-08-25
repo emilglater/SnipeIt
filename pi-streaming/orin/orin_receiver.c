@@ -157,12 +157,10 @@ OrinReceiver *orin_receiver_start(const char *endpoint, PoseRing *ring,
         return NULL;
     }
 
-    /* Bound the inbound queue at 100 messages. NOTE: this does NOT drop.
-     * ZeroMQ only discards at the high-water mark on PUB/SUB; on PUSH/PULL it
-     * applies back-pressure, so at the mark the Orin's send blocks rather than
-     * the Pi dropping anything. Detections are only useful fresh, so if we
-     * ever fall behind the backlog surfaces downstream as pose-ring misses,
-     * not as drops here. */
+    /* Bound the inbound queue at 100 messages. This does not drop: ZeroMQ
+     * discards at the high-water mark on PUB/SUB only. On PUSH/PULL it applies
+     * back-pressure, so at the mark the Orin's send blocks and the Pi keeps
+     * every detection it is given. */
     int hwm = 100;
     zmq_setsockopt(r->sock, ZMQ_RCVHWM, &hwm, sizeof(hwm));
 
