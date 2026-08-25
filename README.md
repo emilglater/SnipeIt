@@ -183,7 +183,8 @@ two in the hard shadow of a building.*
 coordinates everything else. It streams video to a Jetson Orin Nano for object
 detection, drives the servo arm through the device layer in root `src/`, and
 serves the Android app. A separate module listens on a four-microphone array and
-reports the direction a gunshot came from.
+reports the direction a gunshot came from, covered under
+[acoustic direction finding](#acoustic-direction-finding).
 
 Detection runs on the Orin. All geometry, pose, tracking and servo control stay
 on the Pi.
@@ -211,24 +212,6 @@ flowchart LR
     ORIN -->|"detection JSON, ZeroMQ"| PI
     PI --- RIG
 ```
-
-### Module map
-
-| Module | Role |
-|---|---|
-| `src/main.c` | Orchestrator: config, the child processes, the WebSocket server, the two bridges, the frame sender and the main loop |
-| `src/config.c` | Hand-rolled JSON config parser, no external library |
-| `src/process_manager.c` | Spawns and supervises the mediaMTX and FFmpeg child processes |
-| `src/websocket_server.c` | libwebsockets server for the app, one client at a time |
-| `src/ddl_bridge.c` | Bridges the root `src/` sensor and servo stack to streaming: telemetry up, lock and aim commands down, and the whole Orin detection path |
-| `orin/frame_sender` | The GStreamer pipeline. Owns the camera and feeds both the Orin and the app preview from one capture |
-| `orin/sei_frame_id` | Builds and parses the unit that carries the `frame_id` inside the H.265 stream |
-| `orin/orin_receiver` | The ZeroMQ receiver thread |
-| `orin/detection_msg` | Detection JSON parser. No ZeroMQ dependency, so it unit-tests on its own |
-| `orin/pose_ring` | Thread-safe `frame_id` to capture-pose ring buffer |
-| `orin/aiming` | Bounding box, capture pose and field of view to servo angles and a range estimate |
-| `orin/tracker` | Stable track ids, by association in angular space |
-| `acoustic/` | Microphone-array gunshot direction finding. Self-contained, and shares only the WebSocket server |
 
 ### Wire contract A - frames to the Orin
 
@@ -465,6 +448,7 @@ One app is connected at a time. Messages out:
 | `stream_ready` | On connect, carrying the RTSP port and stream name |
 | `sensor_data` | Once per second, the aggregated sensor frame |
 | `target_detection` | Once per detection message from the Orin |
+| `acoustic_event` | Once per detected gunshot, see [acoustic direction finding](#acoustic-direction-finding) |
 
 `target_detection` has the same shape as wire contract B with two changes. `id`
 now carries the stable track id, and each detection gains a `confirmed` flag.
@@ -496,10 +480,117 @@ Commands in:
   is polled with `kill(pid, 0)` instead: SIGTERM, up to three seconds of
   polling, then SIGKILL.
 
+### Acoustic direction finding
+
+Four INMP441 microphones sit on a forward-facing semicircle of radius 0.08 m, at
+-90, -30, +30 and +90 degrees. Coordinates are +X to the right and +Y forward
+along the camera boresight, with the origin at the center of the array. The
+module reports the direction a gunshot came from, as an angle relative to that
+boresight.
+
+It is an independent sensor path. It shares only the WebSocket server, and never
+touches the camera, the Orin link or the servos. If it cannot start, the server
+says so and carries on without it, and nothing else degrades.
+
+The work is split across two threads. The capture thread does the cheap
+per-sample work and decides when something happened. The main loop does the
+expensive transform work once, and only after something has.
+
+```mermaid
+flowchart TD
+    subgraph cap["Capture thread"]
+        A["snd_pcm_readi<br/>48 kHz, 4 channels, 480-frame chunks"]
+        B["convert to float"]
+        C["ring_buffer_write<br/>2 seconds of history"]
+        D["downmix to mono"]
+        E["onset_detector_process<br/>high-pass, two energy averages, ratio test"]
+        F["raise the event flag"]
+        A --> B --> C --> D --> E --> F
+    end
+    subgraph main["Main loop, once per tick"]
+        G["ring_buffer_snapshot<br/>4096 frames"]
+        H["gcc_phat_compute_all_pairs<br/>6 microphone pairs"]
+        I["srp_phat_estimate<br/>181 candidate directions"]
+        J["acoustic_event JSON to the app"]
+        G --> H --> I --> J
+    end
+    F -.->|"the tick sees the flag"| G
+```
+
+**Deciding that something happened.** The onset detector runs on the mono
+downmix. A 2nd-order Butterworth high-pass at 300 Hz strips the low-frequency
+rumble first. Butterworth because it has the flattest passband of the standard
+filter shapes, so it leaves the shape of the blast itself alone. Two running
+averages of the squared sample then track energy over about 10 ms and over about
+500 ms. A gunshot is a step change in the ratio between them, so the detector
+fires when the short average exceeds the long one by a factor of 10. Three gates
+keep that honest: a 500 ms refractory period so one shot produces one event, a
+0.75 s warmup so the long average has settled, and a floor on the long average
+so near-silence cannot manufacture a large ratio out of nothing.
+
+- **[The per-sample loop](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/acoustic/onset_detector.c#L123-L188)** -
+  the filter, both averages and the three gates. The averages are exponential
+  rather than true sliding windows. A 500 ms window at 48 kHz would need a
+  24,000-sample buffer per channel, and the exponential form approximates it at
+  one multiply-add per sample.
+
+**Finding the delay between a pair of microphones.** Sound reaches the four
+microphones at slightly different times, and those differences are what fix the
+direction. Four microphones give six pairs, so six delays. Each one comes from a
+cross-correlation computed through the frequency domain, with one extra step:
+the cross-spectrum is divided by its own magnitude, which discards amplitude and
+keeps only phase. That is the phase transform, the PHAT in GCC-PHAT, and for an
+impulsive sound it turns a broad correlation hump into a sharp spike.
+
+The array is 0.16 m across, so no real delay can exceed 0.16 m divided by the
+speed of sound, about 466 microseconds, or 23 samples at 48 kHz. The peak search
+is restricted to that window with a two-sample margin, and anything outside it
+is a reflection or noise by definition.
+
+- **[The computation for one pair](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/acoustic/gcc_phat.c#L180-L326)** -
+  two forward transforms, the phase transform, one inverse transform, then the
+  peak search inside the physically possible window. The transform plans are
+  built once at startup, never on the event path.
+- **[Sub-sample precision](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/acoustic/gcc_phat.c#L40-L76)** -
+  one sample at 48 kHz is about 21 microseconds, coarser than the direction
+  needs. Fitting a parabola through the peak and its two neighbors recovers
+  roughly a tenth of a sample.
+
+**Turning six delays into one direction.** The estimator sweeps candidate
+directions from -90 to +90 degrees in 1 degree steps. For each candidate, the
+array geometry gives the delay every pair should show. Each pair then scores how
+close its measured delay is to that expectation, weighted by how strong its
+correlation peak was, and the best-scoring angle wins.
+
+- **[The expected delay for a candidate direction](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/acoustic/srp_phat.c#L31-L60)** -
+  the geometry. A plane wave arriving from a given angle reaches two microphones
+  at times that differ by the projection of the baseline between them onto the
+  direction of arrival.
+
+The reported confidence is one minus the ratio of the mean score to the best
+score across the sweep. A sharp peak against a flat background gives a number
+near 1 and a flat sweep gives one near 0. It measures how well defined the
+direction is, and it is not a probability.
+
+**What the app receives.** One JSON object per event.
+
+```json
+{"type":"acoustic_event","timestamp_us":0,"azimuth_deg":0.0,
+ "confidence":0.00,"peak_amplitude":0.0000,"duration_ms":0.0,"valid":false}
+```
+
+Every event is sent. `valid` is set when the confidence is above 0.3 and the
+peak amplitude above 0.05, and the app decides what to do with it. Two fields
+are easy to misread. `timestamp_us` comes from the monotonic clock and has an
+arbitrary origin, so only differences between events mean anything.
+`duration_ms` is the total time any sample sat above the amplitude threshold,
+averaged across the four channels, rather than the length of one continuous
+burst.
+
 ### Tests
 
-The Orin path is where the tests are. Five of them need no extra dependency and
-run together under `make test_orin`.
+Six tests cover the Orin path. Five of them need no extra dependency and run
+together under `make test_orin`.
 
 | Unit test | What it covers |
 |---|---|
