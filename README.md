@@ -9,15 +9,15 @@ over WebSocket.
 
 | Path | Contents |
 |---|---|
-| [`src/`](https://github.com/emilglater/SnipeIt/tree/47461b124401207897ca71568dfc942d95b5c4f4/src) | Embedded layer in C: HAL, OSAL, Active Object framework, DDL sensor drivers, scheduler, broadcaster |
-| [`pi-streaming/`](https://github.com/emilglater/SnipeIt/tree/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming) | C server: WebSocket, video pipeline, Orin protocol, acoustic DSP |
+| [`src/`](https://github.com/emilglater/SnipeIt/tree/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src) | Embedded layer in C: HAL, OSAL, Active Object framework, DDL sensor drivers, scheduler, broadcaster |
+| [`pi-streaming/`](https://github.com/emilglater/SnipeIt/tree/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming) | C server: WebSocket, video pipeline, Orin protocol, acoustic DSP |
 
 ### Related repositories
 
 | Repository | Contents |
 |---|---|
 | [`smart-spotter-orin`](https://github.com/giladf424/smart-spotter-orin) | The detection node that runs on the Jetson Orin Nano, plus a directory of Jupyter notebooks used to build the datasets and train the person-detection model. Public, and has its own README |
-| [`SnipeItApp/MySnipeIt`](https://github.com/emilglater/SnipeIt/tree/47461b124401207897ca71568dfc942d95b5c4f4/SnipeItApp/MySnipeIt) | The Android app. Developed in its own repository and merged into this one. Has its own README |
+| [`SnipeItApp/MySnipeIt`](https://github.com/emilglater/SnipeIt/tree/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/SnipeItApp/MySnipeIt) | The Android app. Developed in its own repository and merged into this one. Has its own README |
 
 The Orin receives H.265 video over RTP and returns detections over ZeroMQ. It is
 stateless and never sees pose, distance or angles, which
@@ -35,18 +35,18 @@ The whole hardware layer is built around one main pattern: every peripheral is a
 Active Object that runs on its own thread, with a blocking event queue, and a finite
 state machine. Each module uses the event bus for communication with the others.
 
-- **[The Active Object event loop](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/util/active_object/active_object.c#L6-L29)** -
+- **[The Active Object event loop](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/util/active_object/active_object.c#L6-L29)** -
   pop an event from the queue, break on `eFSM_EVENT_END`, otherwise dispatch
   it into the FSM.
-- **[The blocking queue](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/util/queue/queue.c#L39-L88)** -
+- **[The blocking queue](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/util/queue/queue.c#L39-L88)** -
   mutex plus condition variable, so an idle Active Object thread sleeps
   instead of spinning.
-- **[The FSM](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/util/fsm/fsm.h#L22-L33)** -
+- **[The FSM](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/util/fsm/fsm.h#L22-L33)** -
   three types (`StateFP`, `Event`, `FSM`) save the FSM state and enable transition.
-- **[State transition](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/util/fsm/fsm.c#L37-L53)** -
+- **[State transition](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/util/fsm/fsm.c#L37-L53)** -
   exit event, swap the state function pointer, entry event, so any state can
   pair setup in ENTRY with the matching teardown in EXIT and be certain both run.
-- **[Event bus publish](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/util/event_bus/event_bus.c#L88-L113)** -
+- **[Event bus publish](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/util/event_bus/event_bus.c#L88-L113)** -
   matches on (Active Object id, event type) and calls each subscriber's own
   post function, which is why no module ever includes another module's header.
 
@@ -54,19 +54,19 @@ state machine. Each module uses the event bus for communication with the others.
 
 ![Layer diagram: APP, DDL and HAL, with each sensor grouped under the bus it uses](images/layer_diagram.png)
 
-- **[The DDL module table](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/ddl/ddl.c#L27-L128)** -
+- **[The DDL module table](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/ddl/ddl.c#L27-L128)** -
   each peripheral holds its start and stop functions and the events it wants to
   hear about, so adding a sensor requires adding a row instead of editing code.
-- **[The registration loop](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/ddl/ddl.c#L130-L153)** -
+- **[The registration loop](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/ddl/ddl.c#L130-L153)** -
   goes over the modules once at startup, starting each module and signing it up
   on the event bus for every event it listed.
-- **[Scheduler timing](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/app/scheduler/scheduler_config.h)** -
+- **[Scheduler timing](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/app/scheduler/scheduler_config.h)** -
   the whole timing policy is one place: the 2 second cycle divided by the number
   of slots gives us its tick period.
-- **[The tick handler](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/app/scheduler/scheduler_fsm.c#L15-L21)** -
+- **[The tick handler](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/app/scheduler/scheduler_fsm.c#L15-L21)** -
   the timer callback only drops a tick event into the scheduler's own queue,
   so the real work still happens on the scheduler thread.
-- **[The run state](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/app/scheduler/scheduler_fsm.c#L85-L124)** -
+- **[The run state](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/app/scheduler/scheduler_fsm.c#L85-L124)** -
   each tick moves one slot forward and sends that slot its event, so every
   sensor gets its own turn and no two of them reach for the hardware at the same
   time.
@@ -76,45 +76,45 @@ state machine. Each module uses the event bus for communication with the others.
 The distance sensor driver is the first sensor module we completed, upon which
 we based all the other sensors, so they all read the same way.
 
-- **[Wire format](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/ddl/distance/distance_fsm.c#L23-L58)** -
+- **[Wire format](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/ddl/distance/distance_fsm.c#L23-L58)** -
   the request command and the layout of the reply, taken byte for byte from the
   sensor datasheet.
-- **[The READ state](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/ddl/distance/distance_fsm.c#L239-L267)** -
+- **[The READ state](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/ddl/distance/distance_fsm.c#L239-L267)** -
   sends the command, asks for the reply, starts a timeout and returns
   immediately, so the thread is never left waiting on the sensor.
-- **[Completion callbacks and retry](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/ddl/distance/distance_fsm.c#L146-L173)** -
+- **[Completion callbacks and retry](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/ddl/distance/distance_fsm.c#L146-L173)** -
   the UART and timer callbacks only send an event back into the FSM instead of
   doing the work themselves, which is what keeps things safe thread-wise and
   timing-wise.
 
 ## Hardware and protocol work
 
-- **[Asynchronous UART](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/hal/uart/hal_uart.c#L108-L178)** -
+- **[Asynchronous UART](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/hal/uart/hal_uart.c#L108-L178)** -
   a read often comes back with only part of the reply, so the completion thread
   asks for the rest and calls the driver back only once the full buffer has arrived.
-- **[Reading a register over I2C](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/hal/i2c/hal_i2c.c#L189-L216)** -
+- **[Reading a register over I2C](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/hal/i2c/hal_i2c.c#L189-L216)** -
   sends the target register address and reads the answer back as a pair of messages.
-- **[Reading a GPIO pin](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/hal/gpio/hal_gpio.c#L115-L138)** -
+- **[Reading a GPIO pin](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/hal/gpio/hal_gpio.c#L115-L138)** -
   a single call that returns the pin level right away.
-- **[AM2302 single-wire bit decoding](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/ddl/temperature_humidity/temperature_humidity_fsm.c#L125-L148)** -
+- **[AM2302 single-wire bit decoding](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/ddl/temperature_humidity/temperature_humidity_fsm.c#L125-L148)** -
   the sensor sends each bit as a pulse on a single wire, and the code calculates
   whether the bit is a one or a zero by timing how long that pulse lasts.
-- **[Event-driven GPS configuration](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/ddl/gps/gps_fsm.c#L247-L297)** -
+- **[Event-driven GPS configuration](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/ddl/gps/gps_fsm.c#L247-L297)** -
   the configuration moves one step forward each time the previous step reports
   back.
-- **[PCA9685 PWM frequency](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/ddl/servo/servo_fsm.c#L79-L113)** -
+- **[PCA9685 PWM frequency](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/ddl/servo/servo_fsm.c#L79-L113)** -
   changing the PWM frequency means putting the chip to sleep, writing the new 
   value and waking it again, in exactly that order, as the datasheet requires.
-- **[Servo angle to PWM](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/ddl/servo/servo_fsm.c#L202-L241)** -
+- **[Servo angle to PWM](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/ddl/servo/servo_fsm.c#L202-L241)** -
   turns a requested angle into a pulse width using the measured range of the
   servos, and rejects angles the arm can't physically reach.
 
 ## Sensor data aggregation
 
-- **[The shared frame](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/ddl/ddl_frame.h)** -
+- **[The shared frame](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/ddl/ddl_frame.h)** -
   one struct with a field per sensor, with the padding spelled out so its size
   and layout stay the same during transmition.
-- **[The broadcaster snapshot](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/src/app/broadcaster/broadcaster_fsm.c#L7-L50)** -
+- **[The broadcaster snapshot](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/src/app/broadcaster/broadcaster_fsm.c#L7-L50)** -
   copies the live readings into a second copy once per scheduler cycle, so the
   app always gets a matching set of values instead of catching some sensors
   mid-update.
@@ -162,10 +162,10 @@ deliberately keep out of the production build.
 
 ## Host unit tests
 
-- **[Active Object framework](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/test/active_object/test_active_object.c)** -
+- **[Active Object framework](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/test/active_object/test_active_object.c)** -
   covers thread startup, initialization and sending events, to test the active
   object logic.
-- **[Distance FSM with the hardware mocked out](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/test/distance/test_distance.c)** -
+- **[Distance FSM with the hardware mocked out](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/test/distance/test_distance.c)** -
   CMock stands in for the UART, the timer and the FSM, and the test keeps hold
   of the callbacks the driver hands over so it can trigger them itself, which is
   how the state machine gets tested with no hardware attached.
@@ -241,10 +241,10 @@ produce it inserts a `03` byte to break it up. Those are the
 emulation-prevention bytes, and any code that writes or reads a unit by hand has
 to handle them.
 
-- **[Building the SEI unit](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/sei_frame_id.c#L22-L70)** -
+- **[Building the SEI unit](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/sei_frame_id.c#L22-L70)** -
   assembles the header, the UUID and the four id bytes, then copies the result
   out through the emulation-prevention scan.
-- **[Reading it back](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/sei_frame_id.c#L72-L127)** -
+- **[Reading it back](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/sei_frame_id.c#L72-L127)** -
   the inverse. Strip the emulation-prevention bytes, walk the payload type and
   size fields, and only accept the unit if the UUID matches.
 
@@ -278,10 +278,10 @@ to handle them.
   it.
 - Unknown keys are skipped, so the Orin can add fields without breaking the Pi.
 
-- **[The detection parser](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/detection_msg.c#L310-L357)** -
+- **[The detection parser](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/detection_msg.c#L310-L357)** -
   written by hand, with no allocation and no external library. Every field is
   bounded, and anything it does not recognize is skipped rather than rejected.
-- **[The receive loop](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/orin_receiver.c#L68-L124)** -
+- **[The receive loop](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/orin_receiver.c#L68-L124)** -
   polls with a timeout so shutdown latency is bounded, retries on an interrupted
   call, and drains everything already queued before polling again so a burst
   does not back up.
@@ -339,26 +339,28 @@ The chain, end to end.
 4. `tracker` matches detections to existing tracks in that bearing space rather
    than in the image.
 
-- **[The frame_id to pose join](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/pose_ring.c#L57-L118)** -
+- **[The frame_id to pose join](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/pose_ring.c#L57-L118)** -
   the ring is scanned newest first under a mutex, because the id being looked up
   is nearly always among the last few recorded. Capacity is chosen in time
   rather than in frames: 16 entries hold several seconds of history at the rate
   this encode sustains.
-- **[Bounding box to world bearing](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/aiming.c#L77-L116)** -
+- **[Bounding box to world bearing](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/aiming.c#L77-L116)** -
   the core geometry. The box center is normalized about the frame center, turned
   into an angle through the measured field of view, added to the pose the frame
   was captured at, and clamped to what the arm can reach.
-- **[Range from box height](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/aiming.c#L118-L134)** -
+- **[Range from box height](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/aiming.c#L118-L134)** -
   a pinhole model. A known target height and the box height in pixels give a
   distance.
-- **[The motion compensation itself](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/tracker.c#L70-L94)** -
+- **[The motion compensation itself](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/tracker.c#L83-L107)** -
   22 lines. It reuses the aiming geometry to turn each box into an absolute
   bearing and an angular width, and the camera's own movement drops out.
-- **[Association in angular space](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/tracker.c#L119-L223)** -
+- **[Association in angular space](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/tracker.c#L152-L325)** -
   greedy nearest neighbor, matching only within the same class, with the gate
   scaled by how wide the target subtends. A large nearby target is allowed to
-  move further between frames than a small distant one.
-- **[The whole join in one function](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/src/ddl_bridge.c#L223-L323)** -
+  move further between frames than a small distant one. The locked target's
+  track is pinned: it is matched first with a doubled gate before the greedy
+  pass runs.
+- **[The whole join in one function](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/src/ddl_bridge.c#L236-L339)** -
   detection to pose to tracker to the app, and on to the servo when a target is
   locked.
 
@@ -368,11 +370,14 @@ narrow the lens's nominal angle. `script/probe_camera_fov.py` re-measures them.
 
 A track has to be seen twice before it can be locked, it keeps its id while it
 is unseen for up to 1.5 seconds, and when all 32 slots are full the
-longest-unseen track is dropped. Two conditions skip tracking for one frame:
-the `frame_id` is too old to still be in the ring, or the frame was captured
-while the arm was still physically moving toward a large commanded angle. In
-both cases the boxes are still forwarded to the app and the existing tracks
-simply coast.
+longest-unseen track is dropped. The locked track is exempt from both: its
+lifetime is bounded by the operator's lock rather than by time, so it survives
+a long slew or a crossing target that would recycle any other id. Two
+conditions skip tracking for one frame: the `frame_id` is too old to still be
+in the ring, or the frame was captured while the arm was still physically
+moving toward a large commanded angle, a window that scales with the size of
+the jump. In both cases the boxes are still forwarded to the app and the
+existing tracks simply coast.
 
 ![Two people walking across each other, each keeping its own track id through the crossing](images/tracking.gif)
 
@@ -419,16 +424,16 @@ rather than blocks, so the slow H.265 encode cannot park the pool and stall
 capture. `cappoint` sits after that queue, so a frame the queue drops can never
 shift the `frame_id` away from the frame it belongs to.
 
-- **[The whole pipeline build](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/frame_sender.c#L264-L457)** -
+- **[The whole pipeline build](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/frame_sender.c#L264-L457)** -
   both encoder branches and both probes. The pipeline is assembled as one
   description string, then the two probes are attached to the elements by
   name.
-- **[Splicing the SEI unit in](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/frame_sender.c#L105-L164)** -
+- **[Splicing the SEI unit in](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/frame_sender.c#L105-L164)** -
   takes the next `frame_id` from a FIFO instead of matching timestamps, and
   rebuilds the buffer with the unit inserted ahead of the picture data. B-frames
   are switched off so the encoder emits one frame out for one frame in, in
   order, which is what keeps the FIFO lined up.
-- **[Finding where to splice](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/orin/frame_sender.c#L43-L75)** -
+- **[Finding where to splice](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/orin/frame_sender.c#L43-L75)** -
   scans the frame for the start code of the first picture unit, skipping the
   parameter sets that precede it.
 
@@ -459,23 +464,23 @@ Commands in:
 | Command | Effect |
 |---|---|
 | `set_servo_angles` | Moves the arm to an explicit pan and tilt, clamped to the servo range. It cancels any active lock |
-| `select_target` | Locks or unlocks. With a target id it locks that track, without one it follows the highest-confidence detection |
+| `select_target` | Locks or unlocks. With a target id it locks and pins that track, without one it follows the highest-confidence detection |
 
 ### Server orchestration
 
-- **[The 20 ms waker thread](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/src/main.c#L84-L98)** -
+- **[The 20 ms waker thread](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/src/main.c#L84-L98)** -
   the WebSocket library ignores the timeout it is handed and blocks on its own,
   which can be tens of seconds on an idle link, and the main loop is the only
   thing servicing it. A separate thread calls `lws_cancel_service()` every
   20 ms, the one call documented as safe from another thread. That is what paces
   the entire loop at about 50 Hz, and it is why the loop needs no sleep of its
   own.
-- **[Running is not publishing](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/src/main.c#L191-L212)** -
+- **[Running is not publishing](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/src/main.c#L191-L212)** -
   a child process being alive is not proof it is doing anything. FFmpeg can sit
   inside its input probe indefinitely on a starved pipe, so the server waits for
   the line FFmpeg prints only once it has actually opened its output before it
   tells the app the stream is ready.
-- **[Graceful child shutdown](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/src/process_manager.c#L72-L111)** -
+- **[Graceful child shutdown](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/src/process_manager.c#L72-L111)** -
   child processes are reaped automatically, which rules out `waitpid`. Liveness
   is polled with `kill(pid, 0)` instead: SIGTERM, up to three seconds of
   polling, then SIGKILL.
@@ -528,7 +533,7 @@ keep that honest: a 500 ms refractory period so one shot produces one event, a
 0.75 s warmup so the long average has settled, and a floor on the long average
 so near-silence cannot manufacture a large ratio out of nothing.
 
-- **[The per-sample loop](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/acoustic/onset_detector.c#L123-L188)** -
+- **[The per-sample loop](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/acoustic/onset_detector.c#L123-L188)** -
   the filter, both averages and the three gates. The averages are exponential
   rather than true sliding windows. A 500 ms window at 48 kHz would need a
   24,000-sample buffer per channel, and the exponential form approximates it at
@@ -547,11 +552,11 @@ speed of sound, about 466 microseconds, or 23 samples at 48 kHz. The peak search
 is restricted to that window with a two-sample margin, and anything outside it
 is a reflection or noise by definition.
 
-- **[The computation for one pair](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/acoustic/gcc_phat.c#L180-L326)** -
+- **[The computation for one pair](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/acoustic/gcc_phat.c#L180-L326)** -
   two forward transforms, the phase transform, one inverse transform, then the
   peak search inside the physically possible window. The transform plans are
   built once at startup, never on the event path.
-- **[Sub-sample precision](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/acoustic/gcc_phat.c#L40-L76)** -
+- **[Sub-sample precision](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/acoustic/gcc_phat.c#L40-L76)** -
   one sample at 48 kHz is about 21 microseconds, coarser than the direction
   needs. Fitting a parabola through the peak and its two neighbors recovers
   roughly a tenth of a sample.
@@ -562,7 +567,7 @@ array geometry gives the delay every pair should show. Each pair then scores how
 close its measured delay is to that expectation, weighted by how strong its
 correlation peak was, and the best-scoring angle wins.
 
-- **[The expected delay for a candidate direction](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/acoustic/srp_phat.c#L31-L60)** -
+- **[The expected delay for a candidate direction](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/acoustic/srp_phat.c#L31-L60)** -
   the geometry. A plane wave arriving from a given angle reaches two microphones
   at times that differ by the projection of the baseline between them onto the
   direction of arrival.
@@ -594,13 +599,13 @@ together under `make test_orin`.
 
 | Unit test | What it covers |
 |---|---|
-| [`test_sei_frame_id.c`](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/test/test_sei_frame_id.c) | 4 cases, including a unit embedded in a longer stream |
-| [`test_pose_ring.c`](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/test/test_pose_ring.c) | 4 cases, including a concurrency run of roughly 200,000 lookups |
-| [`test_detection_msg.c`](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/test/test_detection_msg.c) | 8 cases: malformed input, overflow, truncation, unknown keys |
-| [`test_aiming.c`](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/test/test_aiming.c) | 7 cases: frame edges, clamping, distance, bad arguments |
-| [`test_tracker.c`](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/test/test_tracker.c) | 4 cases, built by inverting the aiming geometry so that a stationary target produces a moving box as the camera pans |
+| [`test_sei_frame_id.c`](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/test/test_sei_frame_id.c) | 4 cases, including a unit embedded in a longer stream |
+| [`test_pose_ring.c`](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/test/test_pose_ring.c) | 4 cases, including a concurrency run of roughly 200,000 lookups |
+| [`test_detection_msg.c`](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/test/test_detection_msg.c) | 8 cases: malformed input, overflow, truncation, unknown keys |
+| [`test_aiming.c`](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/test/test_aiming.c) | 7 cases: frame edges, clamping, distance, bad arguments |
+| [`test_tracker.c`](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/test/test_tracker.c) | 8 cases, built by inverting the aiming geometry so that a stationary target produces a moving box as the camera pans; four cover the locked-track protection |
 
-- **[The integration test](https://github.com/emilglater/SnipeIt/blob/47461b124401207897ca71568dfc942d95b5c4f4/pi-streaming/test/test_orin_receiver.c)** -
+- **[The integration test](https://github.com/emilglater/SnipeIt/blob/ae0983ddb8bf8063b8b59bca9a159cb3bda26477/pi-streaming/test/test_orin_receiver.c)** -
   a real ZeroMQ push socket feeding a real pull receiver over loopback, checking
   that a detection joins back to the capture pose it belongs to. It needs
   `libzmq3-dev` and has its own target, `make test_orin_receiver`.
