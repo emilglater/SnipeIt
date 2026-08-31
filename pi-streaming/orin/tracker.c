@@ -8,6 +8,7 @@
 #include "tracker.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -113,6 +114,8 @@ static int find_free_or_evict(Tracker *t)
             slot   = k;
         }
     }
+    printf("[TRACKER] evict id=%u cls=%s hits=%d (slots full)\n",
+           t->tracks[slot].id, t->tracks[slot].cls, t->tracks[slot].hits);
     return slot;
 }
 
@@ -206,6 +209,37 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
         tr->last_seen_ms = now;
         out_ids[i]       = tr->id;
         out_confirmed[i] = (tr->hits >= N_INIT);   /* false at hits==1 */
+
+        /* Log why this detection failed to match: the nearest same-class
+         * track and the gate it would have needed. A spawn right next to a
+         * live track is the association-failure (id churn) signature. */
+        float    near_d  = -1.0f;
+        uint32_t near_id = 0;
+        for (int k = 0; k < TRACKER_MAX_TRACKS; k++)
+        {
+            const Track *o = &t->tracks[k];
+            if (!o->used || o->id == tr->id) continue;
+            if (strcmp(o->cls, tr->cls) != 0) continue;
+            float d = hypotf(dp[i] - o->pan, dt[i] - o->tilt);
+            if (near_d < 0.0f || d < near_d)
+            {
+                near_d  = d;
+                near_id = o->id;
+            }
+        }
+        if (near_d >= 0.0f)
+        {
+            printf("[TRACKER] spawn id=%u cls=%s pan=%.2f tilt=%.2f "
+                   "(nearest id=%u at %.2f deg, gate %.2f)\n",
+                   tr->id, tr->cls, (double)tr->pan, (double)tr->tilt,
+                   near_id, (double)near_d,
+                   (double)fmaxf(GATE_MIN_DEG, GATE_K * dw[i]));
+        }
+        else
+        {
+            printf("[TRACKER] spawn id=%u cls=%s pan=%.2f tilt=%.2f\n",
+                   tr->id, tr->cls, (double)tr->pan, (double)tr->tilt);
+        }
     }
 
     /* Coast/delete tracks not seen this frame that have aged out. The
@@ -217,6 +251,9 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
         if (tr->used && !trk_matched[k] &&
             now >= tr->last_seen_ms && (now - tr->last_seen_ms) > MAX_COAST_MS)
         {
+            printf("[TRACKER] delete id=%u cls=%s unseen=%llums hits=%d\n",
+                   tr->id, tr->cls,
+                   (unsigned long long)(now - tr->last_seen_ms), tr->hits);
             tr->used = false;
         }
     }
