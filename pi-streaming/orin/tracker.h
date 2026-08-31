@@ -21,7 +21,8 @@
  * frames.
  *
  * Threading: all state is touched only on the Orin receiver thread (inside
- * orin_detection_handler), so the tracker needs no lock of its own.
+ * orin_detection_handler), so the tracker needs no lock of its own. The one
+ * exception is tracker_set_pinned_id, which is atomic and callable anywhere.
  */
 
 #ifndef ORIN_TRACKER_H
@@ -74,6 +75,20 @@ void tracker_destroy(Tracker *t);
  */
 void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *pose,
                     uint32_t *out_ids, bool *out_confirmed);
+
+/**
+ * @brief Pin one track for locked-target protection (0 = unpin).
+ *
+ * @param t  The tracker. May be NULL (no-op).
+ * @param id Stable track id to pin, or 0 to clear the pin.
+ *
+ * @details The pinned track is matched first each frame with a widened gate,
+ *          is never coast-deleted and never evicted: an operator lock must
+ *          survive occlusions, slews and crossings that would recycle a
+ *          normal track's id. Safe to call from any thread (atomic store);
+ *          takes effect from the next tracker_update.
+ */
+void tracker_set_pinned_id(Tracker *t, uint32_t id);
 
 /**
  * @brief Number of live tracks (diagnostic).

@@ -181,12 +181,168 @@ static void test_teleport_beyond_gate(void)
     tracker_destroy(t);
 }
 
+/* --- Test E: a pinned track outlives a coast gap that kills an unpinned one,
+ *     and its reappearance re-matches the SAME id. */
+static void test_pin_survives_coast(void)
+{
+    AimConfig cfg; aim_config_default(&cfg);
+    Tracker *t = tracker_create(&cfg);
+    uint32_t ids[ORIN_MAX_DETECTIONS]; bool conf[ORIN_MAX_DETECTIONS];
+    int x, y;
+
+    OrinDetectionMsg m; memset(&m, 0, sizeof(m));
+    m.num_detections = 2;
+    box_for_bearing(&cfg, 90, 90, 93, 90, 200, 400, &x, &y);
+    set_det(&m.detections[0], "HUMAN", x, y, 200, 400);
+    box_for_bearing(&cfg, 90, 90, 98, 90, 200, 400, &x, &y);
+    set_det(&m.detections[1], "HUMAN", x, y, 200, 400);
+    PoseEntry p = pose_at(90, 90, 1000);
+    tracker_update(t, &m, &p, ids, conf);
+    uint32_t pin_id = ids[0], ctl_id = ids[1];
+    CHECK(pin_id != 0 && ctl_id != 0 && pin_id != ctl_id, "E: two tracks");
+    tracker_set_pinned_id(t, pin_id);
+
+    /* An empty frame 3 s later (>> MAX_COAST_MS) ages out only the control. */
+    OrinDetectionMsg empty; memset(&empty, 0, sizeof(empty));
+    PoseEntry p2 = pose_at(90, 90, 4000);
+    tracker_update(t, &empty, &p2, ids, conf);
+    CHECK(tracker_active_count(t) == 1, "E: only the pinned track survives");
+
+    /* Pinned target reappears at its bearing -> same id, not a new one. */
+    OrinDetectionMsg m3; memset(&m3, 0, sizeof(m3));
+    m3.num_detections = 1;
+    box_for_bearing(&cfg, 90, 90, 93, 90, 200, 400, &x, &y);
+    set_det(&m3.detections[0], "HUMAN", x, y, 200, 400);
+    PoseEntry p3 = pose_at(90, 90, 4200);
+    tracker_update(t, &m3, &p3, ids, conf);
+    CHECK(ids[0] == pin_id, "E: reappearance re-matches the pinned id");
+    tracker_destroy(t);
+}
+
+/* --- Test F: the pinned track wins a detection that lies CLOSER to an
+ *     unpinned same-class track. */
+static void test_pin_wins_association(void)
+{
+    AimConfig cfg; aim_config_default(&cfg);
+    Tracker *t = tracker_create(&cfg);
+    uint32_t ids[ORIN_MAX_DETECTIONS]; bool conf[ORIN_MAX_DETECTIONS];
+    int x, y;
+
+    OrinDetectionMsg m; memset(&m, 0, sizeof(m));
+    m.num_detections = 2;
+    box_for_bearing(&cfg, 90, 90, 92.0f, 90, 200, 400, &x, &y);
+    set_det(&m.detections[0], "HUMAN", x, y, 200, 400);
+    box_for_bearing(&cfg, 90, 90, 94.5f, 90, 200, 400, &x, &y);
+    set_det(&m.detections[1], "HUMAN", x, y, 200, 400);
+    PoseEntry p = pose_at(90, 90, 1000);
+    tracker_update(t, &m, &p, ids, conf);
+    uint32_t pin_id = ids[0], rival_id = ids[1];
+    tracker_set_pinned_id(t, pin_id);
+
+    /* One detection at 93.5: 1.5 deg from the pinned track, 1.0 from the
+     * rival. Plain greedy would hand it to the rival. */
+    OrinDetectionMsg m2; memset(&m2, 0, sizeof(m2));
+    m2.num_detections = 1;
+    box_for_bearing(&cfg, 90, 90, 93.5f, 90, 200, 400, &x, &y);
+    set_det(&m2.detections[0], "HUMAN", x, y, 200, 400);
+    PoseEntry p2 = pose_at(90, 90, 1300);
+    tracker_update(t, &m2, &p2, ids, conf);
+    CHECK(ids[0] == pin_id, "F: pinned track wins the contested detection");
+    CHECK(ids[0] != rival_id, "F: rival did not steal it");
+    tracker_destroy(t);
+}
+
+/* --- Test G: the pinned track re-acquires through a jump outside the normal
+ *     gate but inside the widened one. */
+static void test_pin_widened_gate(void)
+{
+    AimConfig cfg; aim_config_default(&cfg);
+    Tracker *t = tracker_create(&cfg);
+    uint32_t ids[ORIN_MAX_DETECTIONS]; bool conf[ORIN_MAX_DETECTIONS];
+    int x, y;
+
+    OrinDetectionMsg m; memset(&m, 0, sizeof(m));
+    m.num_detections = 1;
+    box_for_bearing(&cfg, 90, 90, 93, 90, 200, 400, &x, &y);
+    set_det(&m.detections[0], "HUMAN", x, y, 200, 400);
+    PoseEntry p = pose_at(90, 90, 1000);
+    tracker_update(t, &m, &p, ids, conf);
+    uint32_t pin_id = ids[0];
+    tracker_set_pinned_id(t, pin_id);
+
+    /* 5 deg jump: past the ~3.3 deg normal gate (test D shows a big jump
+     * spawns a new id), inside the doubled pinned gate. */
+    box_for_bearing(&cfg, 90, 90, 98, 90, 200, 400, &x, &y);
+    set_det(&m.detections[0], "HUMAN", x, y, 200, 400);
+    PoseEntry p2 = pose_at(90, 90, 1300);
+    tracker_update(t, &m, &p2, ids, conf);
+    CHECK(ids[0] == pin_id, "G: pinned track re-acquires past the normal gate");
+    CHECK(tracker_active_count(t) == 1, "G: no duplicate track spawned");
+    tracker_destroy(t);
+}
+
+/* --- Test H: with all slots full, eviction takes some other track, never the
+ *     pinned one. */
+static void test_pin_not_evicted(void)
+{
+    AimConfig cfg; aim_config_default(&cfg);
+    Tracker *t = tracker_create(&cfg);
+    uint32_t ids[ORIN_MAX_DETECTIONS]; bool conf[ORIN_MAX_DETECTIONS];
+    int x, y;
+
+    /* Fill all 32 slots in one frame: a 7x5 bearing grid inside the FOV,
+     * spaced wider than the association gate (2 deg for these narrow boxes). */
+    OrinDetectionMsg m; memset(&m, 0, sizeof(m));
+    m.num_detections = 32;
+    int n = 0;
+    for (int r = 0; r < 5 && n < 32; r++)
+    {
+        for (int c = 0; c < 7 && n < 32; c++)
+        {
+            float pan  = 90.0f - 7.5f + 2.5f * (float)c;
+            float tilt = 90.0f - 4.8f + 2.4f * (float)r;
+            box_for_bearing(&cfg, 90, 90, pan, tilt, 100, 200, &x, &y);
+            set_det(&m.detections[n], "HUMAN", x, y, 100, 200);
+            n++;
+        }
+    }
+    PoseEntry p = pose_at(90, 90, 1000);
+    tracker_update(t, &m, &p, ids, conf);
+    CHECK(tracker_active_count(t) == TRACKER_MAX_TRACKS, "H: all slots full");
+    uint32_t pin_id = ids[0];
+    tracker_set_pinned_id(t, pin_id);
+
+    /* A new far target with the table full forces an eviction; the pinned
+     * track (tied for longest-unseen) must not be the victim. */
+    OrinDetectionMsg m2; memset(&m2, 0, sizeof(m2));
+    m2.num_detections = 1;
+    box_for_bearing(&cfg, 120, 90, 120, 90, 100, 200, &x, &y);
+    set_det(&m2.detections[0], "HUMAN", x, y, 100, 200);
+    PoseEntry p2 = pose_at(120, 90, 1100);
+    tracker_update(t, &m2, &p2, ids, conf);
+    CHECK(tracker_active_count(t) == TRACKER_MAX_TRACKS, "H: still full");
+
+    /* Re-detect the pinned bearing -> its id survived the eviction. */
+    OrinDetectionMsg m3; memset(&m3, 0, sizeof(m3));
+    m3.num_detections = 1;
+    box_for_bearing(&cfg, 90, 90, 90.0f - 7.5f, 90.0f - 4.8f, 100, 200, &x, &y);
+    set_det(&m3.detections[0], "HUMAN", x, y, 100, 200);
+    PoseEntry p3 = pose_at(90, 90, 1200);
+    tracker_update(t, &m3, &p3, ids, conf);
+    CHECK(ids[0] == pin_id, "H: pinned track was not evicted");
+    tracker_destroy(t);
+}
+
 int main(void)
 {
     test_motion_comp_stable_id();
     test_two_targets_distinct();
     test_coast_drop_reappear();
     test_teleport_beyond_gate();
+    test_pin_survives_coast();
+    test_pin_wins_association();
+    test_pin_widened_gate();
+    test_pin_not_evicted();
 
     if (g_fail == 0) { printf("PASS: all tracker tests\n"); return 0; }
     printf("FAILED: %d check(s)\n", g_fail);

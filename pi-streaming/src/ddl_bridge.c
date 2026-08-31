@@ -770,6 +770,10 @@ void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
             b->has_locked_target_id = false;
             pthread_mutex_unlock(&b->lockon_mtx);
         }
+        if (b->tracker != NULL)
+        {
+            tracker_set_pinned_id(b->tracker, 0);
+        }
         (void)util_event_bus_publish(eAO_SERVO, eSERVO_EVENT_NOISE_DETECTED);
         printf("[CMD] Slew to servo (%.1f, %.1f) + scan\n", h, v);
     }
@@ -797,6 +801,22 @@ void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
                 }
                 pthread_mutex_unlock(&b->lockon_mtx);
             }
+            /* Pin the locked track: the wire id is the tracker's own track id
+             * printed with %u, so it parses straight back. No id -> pin 0. */
+            if (b->tracker != NULL)
+            {
+                uint32_t pin = 0;
+                if (has_tid)
+                {
+                    char *end = NULL;
+                    unsigned long v = strtoul(tid, &end, 10);
+                    if (end != tid && *end == '\0' && v <= 0xFFFFFFFFUL)
+                    {
+                        pin = (uint32_t)v;
+                    }
+                }
+                tracker_set_pinned_id(b->tracker, pin);
+            }
             (void)util_event_bus_publish(eAO_SERVO, eSERVO_EVENT_LOCK);
             printf("[CMD] Lock on%s%s\n", has_tid ? " target " : "",
                    has_tid ? tid : " (best detection)");
@@ -809,6 +829,10 @@ void ddl_bridge_handle_command(DdlBridge* b, const char* json, size_t len)
                 b->locked               = false;
                 b->has_locked_target_id = false;
                 pthread_mutex_unlock(&b->lockon_mtx);
+            }
+            if (b->tracker != NULL)
+            {
+                tracker_set_pinned_id(b->tracker, 0);
             }
             (void)util_event_bus_publish(eAO_SERVO, eSERVO_EVENT_SCAN);
             printf("[CMD] Unlock -> scan\n");

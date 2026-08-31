@@ -18,6 +18,7 @@
 #define MAX_COAST_MS   1500u   /* delete a track unseen for this long          */
 #define N_INIT         2       /* hits before a track is "confirmed"           */
 #define BEARING_ALPHA  0.5f    /* EMA smoothing of the track bearing           */
+#define PIN_GATE_MULT  2.0f    /* gate widening for the pinned (locked) track  */
 
 #define DEG2RAD (0.017453292519943295f)
 #define RAD2DEG (57.29577951308232f)
@@ -45,6 +46,8 @@ struct Tracker
     const AimConfig *aim;
     Track            tracks[TRACKER_MAX_TRACKS];
     uint32_t         next_id;   /* stable id counter; 0 is reserved "none"     */
+    uint32_t         pinned_id; /* locked track id, 0 = none; set from other
+                                   threads, so __atomic access only            */
 };
 
 Tracker *tracker_create(const AimConfig *aim)
@@ -66,6 +69,15 @@ Tracker *tracker_create(const AimConfig *aim)
 void tracker_destroy(Tracker *t)
 {
     free(t);
+}
+
+void tracker_set_pinned_id(Tracker *t, uint32_t id)
+{
+    if (t == NULL)
+    {
+        return;
+    }
+    __atomic_store_n(&t->pinned_id, id, __ATOMIC_RELAXED);
 }
 
 /* Map a detection's bbox + capture pose to its absolute world bearing and its
@@ -94,7 +106,7 @@ static void det_bearing(const Tracker *t, const OrinDetection *d,
     *ang_w = 2.0f * atanf(frac * tanf(half_hfov)) * RAD2DEG;
 }
 
-static int find_free_or_evict(Tracker *t)
+static int find_free_or_evict(Tracker *t, uint32_t pinned)
 {
     for (int k = 0; k < TRACKER_MAX_TRACKS; k++)
     {
@@ -103,12 +115,16 @@ static int find_free_or_evict(Tracker *t)
             return k;
         }
     }
-    /* Full: evict the track unseen the longest. */
-    int      slot   = 0;
-    uint64_t oldest = t->tracks[0].last_seen_ms;
-    for (int k = 1; k < TRACKER_MAX_TRACKS; k++)
+    /* Full: evict the track unseen the longest; the pinned track is exempt. */
+    int      slot   = -1;
+    uint64_t oldest = 0;
+    for (int k = 0; k < TRACKER_MAX_TRACKS; k++)
     {
-        if (t->tracks[k].last_seen_ms < oldest)
+        if (t->tracks[k].id == pinned && pinned != 0)
+        {
+            continue;
+        }
+        if (slot < 0 || t->tracks[k].last_seen_ms < oldest)
         {
             oldest = t->tracks[k].last_seen_ms;
             slot   = k;
@@ -117,6 +133,20 @@ static int find_free_or_evict(Tracker *t)
     printf("[TRACKER] evict id=%u cls=%s hits=%d (slots full)\n",
            t->tracks[slot].id, t->tracks[slot].cls, t->tracks[slot].hits);
     return slot;
+}
+
+/* Fold detection i into track tr: EMA the bearing, refresh the lifecycle. */
+static void bind_detection(Track *tr, int i, const float *dp, const float *dt,
+                           const float *dw, uint64_t now,
+                           uint32_t *out_ids, bool *out_confirmed)
+{
+    tr->pan  += BEARING_ALPHA * (dp[i] - tr->pan);
+    tr->tilt += BEARING_ALPHA * (dt[i] - tr->tilt);
+    tr->ang_w        = dw[i];
+    tr->hits        += 1;
+    tr->last_seen_ms = now;
+    out_ids[i]       = tr->id;
+    out_confirmed[i] = (tr->hits >= N_INIT);
 }
 
 void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *pose,
@@ -153,6 +183,43 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
         trk_matched[k] = false;
     }
 
+    /* Loaded once per frame: a pin racing this frame applies from the next. */
+    const uint32_t pinned = __atomic_load_n(&t->pinned_id, __ATOMIC_RELAXED);
+
+    /* The pinned track matches first, with a widened gate: the operator's lock
+     * must not lose its detection to a nearby track, and must re-acquire
+     * through bearing noise a normal track would reject. */
+    if (pinned != 0)
+    {
+        for (int k = 0; k < TRACKER_MAX_TRACKS; k++)
+        {
+            Track *tr = &t->tracks[k];
+            if (!tr->used || tr->id != pinned)
+            {
+                continue;
+            }
+            float best = 1e9f;
+            int   bi   = -1;
+            for (int i = 0; i < nd; i++)
+            {
+                if (strcmp(tr->cls, msg->detections[i].cls) != 0) continue;
+                float gate = PIN_GATE_MULT * fmaxf(GATE_MIN_DEG, GATE_K * dw[i]);
+                float dist = hypotf(dp[i] - tr->pan, dt[i] - tr->tilt);
+                if (dist <= gate && dist < best)
+                {
+                    best = dist; bi = i;
+                }
+            }
+            if (bi >= 0)
+            {
+                bind_detection(tr, bi, dp, dt, dw, now, out_ids, out_confirmed);
+                det_taken[bi]  = true;
+                trk_matched[k] = true;
+            }
+            break;
+        }
+    }
+
     /* Greedy: repeatedly bind the globally smallest un-gated (det,track) pair,
      * same class only. N is tiny so O(N^2) per pass is fine. */
     for (;;)
@@ -180,23 +247,17 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
         }
         if (bi < 0 || bk < 0) break;
 
-        Track *tr = &t->tracks[bk];
-        tr->pan  += BEARING_ALPHA * (dp[bi] - tr->pan);
-        tr->tilt += BEARING_ALPHA * (dt[bi] - tr->tilt);
-        tr->ang_w        = dw[bi];
-        tr->hits        += 1;
-        tr->last_seen_ms = now;
-        det_taken[bi]    = true;
-        trk_matched[bk]  = true;
-        out_ids[bi]       = tr->id;
-        out_confirmed[bi] = (tr->hits >= N_INIT);
+        bind_detection(&t->tracks[bk], bi, dp, dt, dw, now,
+                       out_ids, out_confirmed);
+        det_taken[bi]   = true;
+        trk_matched[bk] = true;
     }
 
     /* Spawn a new track for every unmatched detection. */
     for (int i = 0; i < nd; i++)
     {
         if (det_taken[i]) continue;
-        int slot = find_free_or_evict(t);
+        int slot = find_free_or_evict(t, pinned);
         Track *tr = &t->tracks[slot];
         memset(tr, 0, sizeof(*tr));
         tr->used = true;
@@ -248,6 +309,10 @@ void tracker_update(Tracker *t, const OrinDetectionMsg *msg, const PoseEntry *po
     for (int k = 0; k < TRACKER_MAX_TRACKS; k++)
     {
         Track *tr = &t->tracks[k];
+        if (tr->used && tr->id == pinned)
+        {
+            continue;   /* the lock, not coast time, bounds the pinned track */
+        }
         if (tr->used && !trk_matched[k] &&
             now >= tr->last_seen_ms && (now - tr->last_seen_ms) > MAX_COAST_MS)
         {
