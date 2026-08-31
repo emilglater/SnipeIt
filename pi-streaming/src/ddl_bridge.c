@@ -35,15 +35,27 @@
 /* Depth of the detection->app forward queue (receiver thread -> main loop). */
 #define DET_FWD_QUEUE 16
 
-/* Slew-settling gate: when the commanded pose jumps more than this between
- * two consecutive captured frames (a 10-deg scan step or a lock slew), the
- * camera is physically mid-move for a while after, so bearings computed from
- * those frames are garbage. Detections whose capture time falls inside the
- * settle window skip the tracker/aiming (tracks coast through it: coast is
- * 1.5 s, the scan dwell 2 s, so ids survive scan steps). Lock-follow's small
- * per-detection corrections stay under the threshold and are not gated. */
-#define POSE_SETTLE_JUMP_DEG 3.0f
-#define POSE_SETTLE_MS       300u
+/* Slew-settling gate: when the commanded pose jumps more than
+ * POSE_SETTLE_JUMP_DEG between two consecutive captured frames (a 10-deg scan
+ * step or a lock slew), the camera is physically mid-move for a while after,
+ * so bearings computed from those frames are garbage. Detections whose capture
+ * time falls inside the settle window skip the tracker/aiming (tracks coast
+ * through it; deletion only fires on association failure in a tracked frame,
+ * so a coasting track that re-matches survives any window length). Lock-follow's
+ * small per-detection corrections stay under the threshold and are not gated.
+ *
+ * The window SCALES WITH THE JUMP: the servo is open-loop with no ramp, so the
+ * recorded pose snaps to the end angle while the physical move takes time
+ * proportional to its size. A fixed 300 ms covered only the start of a big
+ * slew; frames after it were tracked against a pose wrong by several degrees,
+ * broke association and churned track ids (the 2026-08-31 lock-loss defect).
+ * MS_PER_DEG is a conservative guess for the arm's rate under load — calibrate
+ * it from the [TRACKER] spawn/delete log once, then tighten. The cap keeps a
+ * 10-deg scan step's window (300 + 500 = 800 ms) inside the 2 s dwell. */
+#define POSE_SETTLE_JUMP_DEG   3.0f
+#define POSE_SETTLE_BASE_MS    300u
+#define POSE_SETTLE_MS_PER_DEG 50u
+#define POSE_SETTLE_MAX_MS     1200u
 
 /* Where the optional per-detection log goes (SNIPEIT_LOG_DETECTIONS=1). */
 #define DET_LOG_PATH "/tmp/detections.log"
@@ -79,6 +91,7 @@ struct DdlBridge
      * thread, so it goes through __atomic ops. */
     bool             have_last_pose;
     float            last_pose_pan, last_pose_tilt;
+    uint64_t         unsettled_since_ms;
     uint64_t         unsettled_until_ms;
 
     /* Pipeline counters (mixed writer threads -> __atomic ops; drained by the
@@ -252,9 +265,12 @@ static void orin_detection_handler(const OrinDetectionMsg* msg,
      * miss: forward the raw boxes, no tracker/servo work, tracks coast. */
     if (tracked)
     {
+        /* since/until are written separately on the capture thread; the pair
+         * is not read atomically, so a racing window update can mis-gate at
+         * most this one frame — same tolerance as the counters here. */
         uint64_t until = __atomic_load_n(&b->unsettled_until_ms, __ATOMIC_RELAXED);
-        if (pose->capture_ts_ms < until &&
-            pose->capture_ts_ms + POSE_SETTLE_MS >= until)
+        uint64_t since = __atomic_load_n(&b->unsettled_since_ms, __ATOMIC_RELAXED);
+        if (pose->capture_ts_ms >= since && pose->capture_ts_ms < until)
         {
             tracked = false;
             __atomic_fetch_add(&b->n_slew_skip, 1UL, __ATOMIC_RELAXED);
@@ -910,13 +926,34 @@ void ddl_bridge_record_capture_pose(DdlBridge* b, uint32_t frame_id)
 
     uint64_t now = now_ms_mono64();
 
-    /* Open the slew-settling window when the pose jumps between frames. */
-    if (b->have_last_pose &&
-        (fabsf(pan  - b->last_pose_pan)  > POSE_SETTLE_JUMP_DEG ||
-         fabsf(tilt - b->last_pose_tilt) > POSE_SETTLE_JUMP_DEG))
+    /* Open (or extend) the slew-settling window when the pose jumps between
+     * frames, sized by the larger axis jump — see the macro comment. A jump
+     * landing inside an open window keeps the window's start and only pushes
+     * its end, so back-to-back corrections read as one disturbance. */
+    if (b->have_last_pose)
     {
-        __atomic_store_n(&b->unsettled_until_ms, now + POSE_SETTLE_MS,
-                         __ATOMIC_RELAXED);
+        float jump = fmaxf(fabsf(pan  - b->last_pose_pan),
+                           fabsf(tilt - b->last_pose_tilt));
+        if (jump > POSE_SETTLE_JUMP_DEG)
+        {
+            uint64_t win = POSE_SETTLE_BASE_MS +
+                           (uint64_t)(jump * (float)POSE_SETTLE_MS_PER_DEG);
+            if (win > POSE_SETTLE_MAX_MS)
+            {
+                win = POSE_SETTLE_MAX_MS;
+            }
+            uint64_t until = __atomic_load_n(&b->unsettled_until_ms,
+                                             __ATOMIC_RELAXED);
+            if (now >= until)   /* window closed: this jump opens a fresh one */
+            {
+                __atomic_store_n(&b->unsettled_since_ms, now, __ATOMIC_RELAXED);
+            }
+            if (now + win > until)
+            {
+                __atomic_store_n(&b->unsettled_until_ms, now + win,
+                                 __ATOMIC_RELAXED);
+            }
+        }
     }
     b->last_pose_pan  = pan;
     b->last_pose_tilt = tilt;
