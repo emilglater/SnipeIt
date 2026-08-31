@@ -175,7 +175,7 @@ int acoustic_bridge_tick(AcousticBridge* b)
     const float duration_ms = ((float)above_thresh / (float)NUM_CHANNELS)
                               / (float)SAMPLE_RATE * 1000.0f;
 
-    const int valid = (srp_result.confidence > 0.3f && peak_amp > 0.05f) ? 1 : 0;
+    const int valid = (srp_result.confidence > 0.75f && peak_amp > 0.15f) ? 1 : 0;
 
     /* Build event JSON. The Android app parses these key names directly -- do
      * not rename or reorder fields without a matching change on the app side. */
